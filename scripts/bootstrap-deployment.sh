@@ -321,6 +321,7 @@ cat >"${temporary_directory}/deploy-policy.json" <<JSON
       "Effect": "Allow",
       "Action": [
         "apigateway:GET", "apigateway:POST", "apigateway:PUT", "apigateway:PATCH", "apigateway:DELETE",
+        "apigateway:TagResource", "apigateway:UntagResource",
         "scheduler:CreateScheduleGroup", "scheduler:DeleteScheduleGroup",
         "scheduler:GetScheduleGroup", "scheduler:ListTagsForResource",
         "scheduler:TagResource", "scheduler:UntagResource"
