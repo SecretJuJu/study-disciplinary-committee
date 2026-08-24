@@ -52,7 +52,7 @@ pnpm bootstrap:deployment
   - TLS가 아닌 요청 거부
 - OIDC provider: `token.actions.githubusercontent.com`, audience `sts.amazonaws.com`
 - IAM role: `disciplinary-committee-github-deploy`
-  - trust subject를 `repo:{owner}/{repo}:ref:refs/heads/master`로 정확히 제한
+  - GitHub API에서 불변 owner/repository ID를 조회해 trust subject를 `repo:{owner}@{ownerId}/{repo}@{repoId}:ref:refs/heads/master`로 정확히 제한
   - GitHub Actions OIDC 단기 자격증명만 허용
 - permissions boundary: `disciplinary-committee-runtime-boundary`
   - Pulumi가 runtime role의 inline policy를 바꾸더라도 프로젝트 DynamoDB/SQS/Secret/Lambda/Log 범위를 넘지 못하게 제한

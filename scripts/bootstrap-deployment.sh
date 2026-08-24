@@ -62,6 +62,13 @@ if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
   GITHUB_REPOSITORY="$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || true
 fi
 [[ "${GITHUB_REPOSITORY:-}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "Set GITHUB_REPOSITORY=owner/repository or run inside its clone."
+GITHUB_OWNER="${GITHUB_REPOSITORY%%/*}"
+GITHUB_REPOSITORY_NAME="${GITHUB_REPOSITORY#*/}"
+GITHUB_OWNER_ID="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .owner.id)"
+GITHUB_REPOSITORY_ID="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .id)"
+[[ "${GITHUB_OWNER_ID}" =~ ^[0-9]+$ ]] || fail "Could not resolve the immutable GitHub owner ID."
+[[ "${GITHUB_REPOSITORY_ID}" =~ ^[0-9]+$ ]] || fail "Could not resolve the immutable GitHub repository ID."
+GITHUB_OIDC_SUBJECT="repo:${GITHUB_OWNER}@${GITHUB_OWNER_ID}/${GITHUB_REPOSITORY_NAME}@${GITHUB_REPOSITORY_ID}:ref:refs/heads/${DEPLOY_BRANCH}"
 
 AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 CALLER_ARN="$(aws sts get-caller-identity --query Arn --output text)"
@@ -80,6 +87,7 @@ trap 'rm -rf "${temporary_directory}"' EXIT
 
 printf 'AWS caller: %s\n' "${CALLER_ARN}"
 printf 'GitHub repository: %s\n' "${GITHUB_REPOSITORY}"
+printf 'GitHub repository ID: %s\n' "${GITHUB_REPOSITORY_ID}"
 printf 'Deploy branch: %s\n' "${DEPLOY_BRANCH}"
 
 if ! aws s3api head-bucket --bucket "${STATE_BUCKET}" >/dev/null 2>&1; then
@@ -199,7 +207,7 @@ cat >"${temporary_directory}/trust-policy.json" <<JSON
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "repo:${GITHUB_REPOSITORY}:ref:refs/heads/${DEPLOY_BRANCH}"
+          "token.actions.githubusercontent.com:sub": "${GITHUB_OIDC_SUBJECT}"
         }
       }
     }
