@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/interactions.ts src/judge.ts src/outbox.ts src/scheduler.ts --bundle --platform=node --target=node24 --format=cjs --out-extension:.js=.cjs --outdir=dist --sourcemap && node -e \"for (const name of ['interactions', 'judge', 'outbox', 'scheduler']) require('./dist/' + name + '.cjs')\""
+    "build": "esbuild src/interactions.ts src/judge-handler.ts src/judge.ts src/outbox.ts src/scheduler.ts --bundle --platform=node --target=node24 --format=cjs --out-extension:.js=.cjs --outdir=dist --sourcemap && node -e \"for (const name of ['interactions', 'judge-handler', 'judge', 'outbox', 'scheduler']) require('./dist/' + name + '.cjs')\""
   },
   "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1116.0",
+    "@aws-sdk/client-secrets-manager": "^3.1116.0",
+    "@aws-sdk/client-sqs": "^3.1116.0",
+    "@aws-sdk/lib-dynamodb": "^3.1116.0",
     "@disciplinary-committee/ai-judge": "workspace:*",
     "@disciplinary-committee/discord": "workspace:*",
     "@disciplinary-committee/domain": "workspace:*",

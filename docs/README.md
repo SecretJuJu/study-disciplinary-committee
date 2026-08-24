@@ -4,9 +4,9 @@
 
 | 문서                                                    | 용도                                                                   |
 | ------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [기술 사양](technical-spec.md)                          | MVP 범위, 아키텍처, 데이터·AI·보안·비용·Discord 운영 디버깅 결정       |
+| [기술 사양](technical-spec.md)                          | 현재 production 범위, 명령·설정·AI 경계, 런타임·IAM·비용 결정          |
 | [Discord 설정 및 배포](discord-setup-and-deployment.md) | Discord Developer Portal, AWS, Pulumi, GitHub Actions의 실제 설정 순서 |
-| [개발 계획](development-plan.md)                        | 검증 가능한 구현 순서와 완료 기준                                      |
+| [개발 계획](development-plan.md)                        | 초기 구현 이력과 현재 production 범위로 이어지는 개발 기록             |
 | [GitHub Actions](github-actions.md)                     | `master` CI와 OIDC 기반 자동 배포 workflow                             |
 | [자동 배포 bootstrap](bootstrap-and-environment.md)     | AWS IAM/OIDC, 환경변수, GitHub CLI 설정과 자동 배포 절차               |
 

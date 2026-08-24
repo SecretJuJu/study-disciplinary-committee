@@ -4,7 +4,6 @@ import * as pulumi from '@pulumi/pulumi';
 const config = new pulumi.Config();
 const environment = config.require('environment');
 const monthlyBudgetUsd = config.getNumber('monthlyBudgetUsd') ?? 3;
-const discordApplicationId = config.require('discordApplicationId');
 const discordPublicKey = config.require('discordPublicKey');
 const discordDebugChannelId = config.require('discordDebugChannelId');
 const runtimePermissionsBoundaryArn = config.require('runtimePermissionsBoundaryArn');
@@ -35,7 +34,7 @@ const judgeDlq = new aws.sqs.Queue(`${name}-judge-dlq`, {
   tags,
 });
 const judgeQueue = new aws.sqs.Queue(`${name}-judge`, {
-  visibilityTimeoutSeconds: 120,
+  visibilityTimeoutSeconds: 540,
   redrivePolicy: judgeDlq.arn.apply((deadLetterTargetArn) =>
     JSON.stringify({ deadLetterTargetArn, maxReceiveCount: 3 }),
   ),
@@ -66,87 +65,144 @@ const secretVersion = new aws.secretsmanager.SecretVersion(`${name}-app-secrets-
   }),
 });
 
-const lambdaRole = new aws.iam.Role(`${name}-lambda-role`, {
-  assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: 'lambda.amazonaws.com' }),
+const interactionRole = new aws.iam.Role(`${name}-lambda-role`, {
+  assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
+    Service: 'lambda.amazonaws.com',
+  }),
+  permissionsBoundary: runtimePermissionsBoundaryArn,
+  tags,
+});
+const judgeRole = new aws.iam.Role(`${name}-judge-role`, {
+  assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
+    Service: 'lambda.amazonaws.com',
+  }),
   permissionsBoundary: runtimePermissionsBoundaryArn,
   tags,
 });
 const schedulerRole = new aws.iam.Role(`${name}-scheduler-role`, {
-  assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({ Service: 'scheduler.amazonaws.com' }),
+  assumeRolePolicy: aws.iam.assumeRolePolicyForPrincipal({
+    Service: 'scheduler.amazonaws.com',
+  }),
   permissionsBoundary: runtimePermissionsBoundaryArn,
   tags,
 });
 new aws.iam.RolePolicyAttachment(`${name}-logs`, {
-  role: lambdaRole.name,
+  role: interactionRole.name,
+  policyArn: aws.iam.ManagedPolicy.AWSLambdaBasicExecutionRole,
+});
+const judgeLogs = new aws.iam.RolePolicyAttachment(`${name}-judge-logs`, {
+  role: judgeRole.name,
   policyArn: aws.iam.ManagedPolicy.AWSLambdaBasicExecutionRole,
 });
 new aws.iam.RolePolicy(`${name}-runtime-policy`, {
-  role: lambdaRole.id,
+  role: interactionRole.id,
+  policy: pulumi.all([table.arn, judgeQueue.arn]).apply(([tableArn, judgeArn]) =>
+    JSON.stringify({
+      Version: '2012-10-17',
+      Statement: [
+        {
+          Effect: 'Allow',
+          Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:TransactWriteItems'],
+          Resource: tableArn,
+        },
+        {
+          Effect: 'Allow',
+          Action: ['sqs:SendMessage'],
+          Resource: judgeArn,
+        },
+      ],
+    }),
+  ),
+});
+const judgeRuntimePolicy = new aws.iam.RolePolicy(`${name}-judge-runtime-policy`, {
+  role: judgeRole.id,
   policy: pulumi
-    .all([table.arn, judgeQueue.arn, outboxQueue.arn, secrets.arn])
-    .apply(([tableArn, judgeArn, outboxArn, secretsArn]) =>
+    .all([table.arn, judgeQueue.arn, secrets.arn])
+    .apply(([tableArn, judgeArn, secretsArn]) =>
       JSON.stringify({
         Version: '2012-10-17',
         Statement: [
           {
             Effect: 'Allow',
-            Action: [
-              'dynamodb:GetItem',
-              'dynamodb:PutItem',
-              'dynamodb:UpdateItem',
-              'dynamodb:TransactWriteItems',
-            ],
+            Action: ['dynamodb:GetItem', 'dynamodb:TransactWriteItems'],
             Resource: tableArn,
           },
           {
             Effect: 'Allow',
-            Action: [
-              'sqs:SendMessage',
-              'sqs:ReceiveMessage',
-              'sqs:DeleteMessage',
-              'sqs:GetQueueAttributes',
-            ],
-            Resource: [judgeArn, outboxArn],
+            Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes'],
+            Resource: judgeArn,
           },
-          { Effect: 'Allow', Action: ['secretsmanager:GetSecretValue'], Resource: secretsArn },
+          {
+            Effect: 'Allow',
+            Action: ['secretsmanager:GetSecretValue'],
+            Resource: secretsArn,
+          },
         ],
       }),
     ),
 });
 
-const interactions = new aws.lambda.Function(
-  `${name}-interactions`,
+const interactions = new aws.lambda.Function(`${name}-interactions`, {
+  runtime: 'nodejs24.x',
+  role: interactionRole.arn,
+  handler: 'interactions.handler',
+  timeout: 10,
+  memorySize: 256,
+  code: new pulumi.asset.FileArchive('../apps/bot-api/dist'),
+  environment: {
+    variables: {
+      TABLE_NAME: table.name,
+      JUDGE_QUEUE_URL: judgeQueue.url,
+      DISCORD_PUBLIC_KEY: discordPublicKey,
+    },
+  },
+  tags,
+});
+const judge = new aws.lambda.Function(
+  `${name}-judge-worker`,
   {
     runtime: 'nodejs24.x',
-    role: lambdaRole.arn,
-    handler: 'interactions.handler',
-    timeout: 10,
-    memorySize: 256,
+    role: judgeRole.arn,
+    handler: 'judge-handler.handler',
+    timeout: 90,
+    memorySize: 512,
     code: new pulumi.asset.FileArchive('../apps/bot-api/dist'),
     environment: {
       variables: {
         TABLE_NAME: table.name,
-        JUDGE_QUEUE_URL: judgeQueue.url,
         APP_SECRET_ARN: secrets.arn,
-        DISCORD_APPLICATION_ID: discordApplicationId,
-        DISCORD_PUBLIC_KEY: discordPublicKey,
         DISCORD_DEBUG_CHANNEL_ID: discordDebugChannelId,
       },
     },
     tags,
   },
-  { dependsOn: [secretVersion] },
+  { dependsOn: [secretVersion, judgeRuntimePolicy, judgeLogs] },
 );
+new aws.lambda.EventSourceMapping(`${name}-judge-event-source`, {
+  eventSourceArn: judgeQueue.arn,
+  functionName: judge.arn,
+  batchSize: 1,
+  functionResponseTypes: ['ReportBatchItemFailures'],
+});
 new aws.iam.RolePolicy(`${name}-scheduler-invoke`, {
   role: schedulerRole.id,
   policy: interactions.arn.apply((functionArn) =>
     JSON.stringify({
       Version: '2012-10-17',
-      Statement: [{ Effect: 'Allow', Action: 'lambda:InvokeFunction', Resource: functionArn }],
+      Statement: [
+        {
+          Effect: 'Allow',
+          Action: 'lambda:InvokeFunction',
+          Resource: functionArn,
+        },
+      ],
     }),
   ),
 });
-const api = new aws.apigatewayv2.Api(`${name}-api`, { protocolType: 'HTTP', tags });
+const api = new aws.apigatewayv2.Api(`${name}-api`, {
+  protocolType: 'HTTP',
+  tags,
+});
 const integration = new aws.apigatewayv2.Integration(`${name}-integration`, {
   apiId: api.id,
   integrationType: 'AWS_PROXY',
@@ -223,4 +279,5 @@ new aws.budgets.Budget(`${name}-budget`, {
 
 export const interactionEndpoint = stage.invokeUrl.apply((url) => `${url}discord/interactions`);
 export const appSecretArn = secrets.arn;
+export const outboxQueueUrl = outboxQueue.url;
 export const schedulerGroupName = schedulerGroup.name;

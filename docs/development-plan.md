@@ -12,6 +12,8 @@ updated_at: 2026-08-24T12:16:00Z
 
 # Work Plan: 징계위원회 MVP
 
+> 이 문서는 초기 구현 이력이다. 2026-08-25 production 활성 범위와 운영 계약은 [기술 사양](technical-spec.md)과 [Discord 런북](discord-setup-and-deployment.md)을 따른다. 소스에 존재하는 Scheduler/outbox worker는 현재 Pulumi trigger에 연결되지 않았으며, 등록 명령은 `/help`, `/설정`, `/심사`, `/내기록` 네 개다.
+
 ## Goal
 
 월 $3 전후에서 운영 가능한 Discord 학습 심사 봇 MVP를 구현·검증·배포한다.

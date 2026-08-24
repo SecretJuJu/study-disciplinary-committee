@@ -1,4 +1,10 @@
-import type { Judgment, UserStats } from '@disciplinary-committee/domain';
+import type { GuildSettings, Judgment, UserStats } from '@disciplinary-committee/domain';
+
+export type GuildSettingsRecord = GuildSettings & {
+  PK: string;
+  SK: 'SETTINGS';
+  entityType: 'GuildSettings';
+};
 
 export type ReviewSessionRecord = {
   PK: string;
@@ -8,6 +14,7 @@ export type ReviewSessionRecord = {
   guildId: string;
   state: 'open' | 'submitted' | 'judging' | 'finalized' | 'absent_finalized';
   deadlineAt: string;
+  expiresAt: number;
   configVersion: number;
 };
 

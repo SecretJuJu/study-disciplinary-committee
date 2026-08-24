@@ -1,6 +1,6 @@
 # GitHub Actions
 
-이 저장소는 `master` push를 production 배포 기준으로 사용한다. `ci.yml`은 PR과 `master`에서 품질 검사를 하고, `deploy.yml`은 `master`에서 동일 검사를 통과한 뒤 Pulumi와 Discord 설정을 반영한다.
+이 저장소는 `master` push를 production 배포 기준으로 사용한다. `ci.yml`은 PR과 `master`에서 품질 검사를 하고, `deploy.yml`은 `master`에서 동일 검사를 통과한 뒤 Pulumi와 Discord 설정을 반영한다. Discord 단계는 endpoint와 guild command 네 개를 동기화한 뒤 bot/guild/debug channel 권한을 확인하고 테스트 메시지를 보낸다.
 
 ## 외부 설정 전제 조건
 

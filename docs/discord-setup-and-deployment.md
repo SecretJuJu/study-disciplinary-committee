@@ -1,110 +1,95 @@
-# Discord 설정 및 배포 런북
+# Discord 설정·배포·사용 런북
 
-> 상태: bootstrap 및 자동 배포 workflow 구현됨; 외부 실행은 미수행
+> 상태: production 자동 배포 기준
 >
-> 이 문서는 비밀 값을 기록하지 않는다.
+> 비밀 값은 이 문서와 command line 인자에 기록하지 않는다.
 
-## 1. 사전 조건
+## 1. Developer Portal 설정
 
-- GitHub 저장소와 `master` 브랜치
-- AWS 계정, 비용 알림 수신 이메일, `ap-northeast-2` 사용 가능 여부
-- Pulumi state용 S3 bucket을 만들 수 있는 AWS 관리자 권한
-- 개발 전용 Discord test guild와 운영 Discord guild
-- OpenAI API 프로젝트와 `gpt-5.6-luna` 접근 권한
+1. Guild Install을 활성화한다.
+2. Install scopes에서 `bot`, `applications.commands`를 선택한다.
+3. bot 권한은 `View Channel`, `Send Messages`, `Embed Links`, `Use Application Commands`를 선택한다.
+4. `Administrator`, 메시지 내용 읽기, 멤버 목록 읽기, 채널 관리, `Manage Roles`는 현재 범위에 필요 없다.
+5. General Information의 Application ID와 Public Key를 bootstrap 변수로 사용한다.
+6. Bot Token은 GitHub Actions secret과 Pulumi/Secrets Manager 경로로만 전달한다.
+7. bot과 관리자만 볼 수 있는 debug text channel을 만들고 ID를 `DISCORD_DEBUG_CHANNEL_ID`로 설정한다.
 
-## 2. Discord Developer Portal
+Interactions Endpoint URL은 직접 붙여넣을 필요가 없다. `master` 배포 workflow가 Pulumi의 HTTPS output으로 갱신하고 Discord PING 검증을 통과시킨다.
 
-1. Discord Developer Portal에서 Application을 만든다.
-2. **Installation**에서 Guild Install만 켠다.
-3. Default Install Settings에 `bot`, `applications.commands` scopes를 넣는다.
-4. 권한은 `View Channel`, `Send Messages`, `Embed Links`, `Use Application Commands`만 먼저 선택한다. 역할 변경을 실제로 켤 때만 `Manage Roles`를 추가한다.
-5. **General Information**에서 Application ID와 Public Key를 기록한다. Public Key는 `DISCORD_PUBLIC_KEY` 환경설정에 둔다.
-6. **Bot**에서 Bot Token을 생성하고 즉시 AWS Secrets Manager의 `APP_SECRETS` JSON에 저장한다. OpenAI 키도 같은 secret의 별도 JSON 필드에 저장한다. 토큰은 문서·Pulumi output·GitHub Actions log에 넣지 않는다.
-7. 첫 `master` 배포 뒤 workflow가 Pulumi output의 HTTPS URL을 **Interactions Endpoint URL**로 등록한다. Discord가 보내는 PING에 `{ "type": 1 }`로 응답하고 서명 검증이 통과해야 저장된다.
-8. 설치 링크로 test guild에 봇을 추가한다. 운영 guild에는 smoke test 후 설치한다.
-9. bot과 관리자 역할만 접근 가능한 `#bot-debug` 텍스트 채널을 만들고 channel ID를 Pulumi stack config의 `debugChannelId`로 설정한다. interaction token·제출 원문을 보거나 일반 사용자가 쓸 수 있는 채널은 지정하지 않는다.
+## 2. 명령 사용법
 
-### 설치·권한 자동 점검
+배포 시 guild command는 아래 네 개만 동기화된다. `/help`의 내용도 같은 manifest에서 생성되므로 등록된 입력 형식과 함께 바뀐다.
 
-아래 환경변수를 설정한 뒤 진단 스크립트를 실행한다.
-
-```bash
-export DISCORD_APPLICATION_ID='...'
-export DISCORD_BOT_TOKEN='...'
-export DISCORD_GUILD_ID='...'
-export DISCORD_DEBUG_CHANNEL_ID='...'
-pnpm check:discord
+```text
+/help
+/설정 보기
+/설정 저장 제출채널:#채널 판결채널:#채널
+/심사 학습내용:텍스트 [학습시간:분] [배운점:텍스트]
+/내기록
 ```
 
-스크립트는 봇 identity와 guild membership을 확인하고, guild role과 채널 permission overwrite를 Discord 순서로 계산하여 `View Channel`, `Send Messages`, `Embed Links`를 검증한다. 필수 권한이 모두 있으면 debug 채널에 멘션이 차단된 embed 테스트 메시지를 보낸다. 메시지 전송 없이 읽기 점검만 하려면 `DISCORD_SEND_TEST_MESSAGE=false`를 함께 설정한다. 토큰과 원시 API 응답은 출력하지 않는다.
+- `<필수>`에 해당하는 `학습내용`, `제출채널`, `판결채널`은 반드시 입력한다.
+- 대괄호 항목은 선택이다. `학습시간`은 분 단위 정수다.
+- `/설정 보기`와 `/설정 저장`은 서버 관리 권한이 있어야 한다.
+- `/설정 저장` 전에는 `/심사`를 실행할 수 없다.
 
-Guild Install에는 `applications.commands`와 `bot` scope가 필요하며, 서버에서 동작할 권한은 bot 권한으로 관리된다. [Discord 시작 가이드](https://docs.discord.com/developers/quick-start/getting-started)
+`/help`, `/설정`, `/내기록`은 OpenAI 없이 코드와 DynamoDB로 즉시 응답한다. `/심사`만 OpenAI를 사용한다. Discord에 표시되는 “생각 중”은 Lambda 스트리밍이 아니라 type 5 deferred acknowledgement다. SQS가 Judge Lambda를 호출하고, Judge가 판결을 받은 뒤 해당 interaction의 원본 응답을 수정한다.
 
-## 3. 명령 등록 전략
+## 3. 설정 저장 동작
 
-### 개발
+`/설정 저장`은 다음 DynamoDB item을 생성하거나 갱신한다.
 
-- `DISCORD_COMMAND_GUILD_ID`를 test guild ID로 설정한다.
-- `pnpm register:commands --guild $DISCORD_COMMAND_GUILD_ID`를 실행한다.
-- guild 명령은 즉시 갱신되므로 modal, 버튼, 권한을 반복 검증한다.
+```text
+PK=GUILD#{guildId}
+SK=SETTINGS
+```
 
-### 출시
+최초 저장 기본값은 `Asia/Seoul`, 1일 주기, 제출 창 60분, 역할 자동 변경 off, `configVersion=1`이다. 재저장은 기존 정책을 보존하고 두 채널을 바꾸며 configVersion을 하나 올린다. 조건부 갱신이므로 동시에 오래된 설정을 저장하려 하면 실패한다.
 
-- global command payload를 코드에서 생성해 `PUT /applications/{application.id}/commands`로 동기화한다.
-- command 등록은 infrastructure 변경과 분리된 deploy job에서 실행한다.
-- payload diff가 없으면 Discord API를 호출하지 않는다.
-- global 명령 등록 후 test guild에서 실제 `/내기록`, `/설정`, 제출 modal을 한 번 더 확인한다.
+1일 주기와 제출 창 값은 향후 Scheduler용 설정이다. 현재 배포는 정기 소환·마감 Scheduler와 역할 자동 변경을 활성화하지 않는다. `/심사`는 사용자가 직접 실행하는 ad-hoc 심사다.
 
-명령은 HTTP로만 등록하며 guild 명령은 빠른 테스트를 위해 즉시 갱신된다. [Discord Application Commands](https://docs.discord.com/developers/interactions/application-commands)
+## 4. 자동 배포
 
-## 4. AWS·Pulumi 초기 부트스트랩
+```text
+master push
+  → Node 24 + pnpm frozen install
+  → format + ESLint + strict typecheck + Vitest + build
+  → GitHub OIDC로 AWS 역할 획득
+  → Pulumi production 적용
+  → Discord endpoint 갱신
+  → guild command 4개 동기화
+  → Discord identity/guild/debug channel 권한 확인
+  → debug channel 테스트 메시지
+```
 
-1. [자동 배포 bootstrap](bootstrap-and-environment.md)의 환경변수를 준비한다.
-2. 관리자 AWS profile과 `gh auth login` 상태에서 `bash scripts/bootstrap-deployment.sh`를 한 번 실행한다.
-3. 생성된 AWS account ID, S3 backend URL, GitHub OIDC role ARN이 의도한 대상인지 확인한다.
-4. workflow와 코드를 `master`에 push한다.
-5. Pulumi가 API Gateway, Lambda, DynamoDB, SQS/DLQ, Scheduler IAM role, Secrets Manager, CloudWatch, Budget를 만들고 Discord endpoint와 guild commands를 동기화한다.
+배포는 [자동 배포 bootstrap](bootstrap-and-environment.md)의 repository variables/secrets가 준비되어 있어야 한다. workflow는 `master` push에서만 실행되고 production deployment concurrency를 직렬화한다.
 
-## 5. GitHub Actions 및 OIDC
+## 5. Discord 자동 점검
 
-### AWS trust
+로컬에 bot token을 안전하게 주입할 수 있을 때만 다음을 실행한다.
 
-1. bootstrap이 GitHub OIDC provider와 `disciplinary-committee-github-deploy` 역할을 만든다.
-2. trust policy의 `sub`는 해당 저장소의 `master` 브랜치와 audience `sts.amazonaws.com`으로 정확히 제한된다.
-3. 역할에는 프로젝트 prefix의 Pulumi 리소스와 state prefix에 필요한 권한만 부여한다. `AdministratorAccess`는 부여하지 않는다.
+```bash
+DISCORD_SEND_TEST_MESSAGE=false pnpm check:discord
+```
 
-GitHub OIDC는 장기 AWS access key를 GitHub secret에 보관하지 않고 AWS 접근을 제공한다. trust policy에서 `sub` 조건을 제한해야 한다. [GitHub OIDC for AWS](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+필수 환경변수는 `DISCORD_APPLICATION_ID`, `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_DEBUG_CHANNEL_ID`다. 기본값은 테스트 메시지 전송이므로 읽기 점검만 하려면 반드시 `DISCORD_SEND_TEST_MESSAGE=false`를 사용한다.
 
-### 워크플로
+스크립트는 bot identity, guild membership, endpoint, debug channel 소유 guild, `View Channel`/`Send Messages`/`Embed Links`, 등록 command 수를 검사한다. Deploy workflow에서는 테스트 메시지 전송까지 허용한다. token과 원시 Discord 응답은 출력하지 않는다.
 
-| 파일         | 트리거            | 수행                                                                    |
-| ------------ | ----------------- | ----------------------------------------------------------------------- |
-| `ci.yml`     | PR, `master` push | Node 24/pnpm 설치, format, lint, typecheck, test, build                 |
-| `deploy.yml` | `master` push     | CI 재검증, OIDC, `pulumi up`, Discord 동기화, 권한 점검과 테스트 메시지 |
+등록 명령 수는 반드시 `4`여야 한다. endpoint에 서명 없는 POST를 보내면 HTTP `401`이어야 한다.
 
-`permissions`는 `contents: read`, 배포 job에만 `id-token: write`를 둔다. GitHub secret은 command output에 출력하지 않는다. [Pulumi GitHub Actions](https://www.pulumi.com/docs/iac/operations/continuous-delivery/github-actions/)
+## 6. 운영 디버깅
 
-## 6. 배포 순서와 롤백
+Judge의 재시도 가능한 실패는 debug channel에 안전한 원인 코드와 상관 ID만 게시한다. 제출 원문, token, secret, 사용자 입력, 원시 exception은 금지한다. Discord 알림 실패는 원래 SQS 실패를 숨기지 않으며 message는 재시도 후 DLQ로 이동한다.
 
-1. CI 통과와 Pulumi preview를 검토한다.
-2. Lambda·테이블·큐를 배포한다.
-3. dev Discord endpoint PING과 서명 실패 테스트를 수행한다.
-4. test guild 명령을 등록하고 `/설정`, 소환, 제출, 판결, 마감, 주간 결산을 검증한다.
-5. production 승인을 받고 `pulumi up`을 실행한다.
-6. production endpoint를 Discord Portal에 등록하고 global commands를 동기화한다.
-7. 운영 guild에서 관리자만 대상으로 1회 smoke session을 실행한다.
+Discord에서 직접 확인할 최소 시나리오는 다음 순서다.
 
-롤백은 애플리케이션 버전의 재배포와 `pulumi up`으로 수행한다. DynamoDB 삭제·테이블 교체는 rollback 명령에 포함하지 않는다. 판결 오류는 자동으로 되돌리지 않고 `/점수조정`과 감사 기록으로 보정한다.
+1. 관리자가 `/설정 저장`을 실행한다.
+2. `/설정 보기`에서 채널과 기본값을 확인한다.
+3. `/help`에서 위 명령 형식이 표시되는지 확인한다.
+4. `/내기록`에서 신규 사용자는 0회 통계를 받는지 확인한다.
+5. `/심사`를 한 번 실행해 deferred 표시가 최종 판결문으로 바뀌는지 확인한다.
+6. 같은 사용자의 `/내기록` 집계가 1회 증가하는지 확인한다.
+7. SQS judge queue와 DLQ backlog가 0인지 확인한다.
 
-## 7. 운영 점검표
-
-- [ ] `#bot-debug` 채널은 관리자와 bot만 접근 가능하며 일반 운영 채널과 분리되어 있다.
-- [ ] `/help`는 모든 guild 구성원에게 보이고, `/운영상태`·`/최근오류`는 관리자만 실행할 수 있다.
-- [ ] Discord debug alert에는 오류 코드·상관 ID만 있으며 제출 원문·토큰·원시 오류 메시지가 없다.
-- [ ] DLQ가 비어 있다.
-- [ ] Scheduler의 활성 schedule 수와 GuildSettings가 일치한다.
-- [ ] Lambda error/throttle 알람이 없다.
-- [ ] OpenAI 월 예상 비용이 $2 이하다.
-- [ ] AWS monthly forecast가 $2 이하다.
-- [ ] 역할 변경 사용 서버에서 봇 역할이 대상 역할보다 높다.
-- [ ] Discord public key와 bot token이 현재 값이다.
+5번은 실제 OpenAI 과금이 발생하는 수동 검증이다. 자동 배포 smoke는 OpenAI 심사를 호출하지 않는다.
