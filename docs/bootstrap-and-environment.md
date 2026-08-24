@@ -65,7 +65,7 @@ pnpm bootstrap:deployment
 | DynamoDB/SQS/Lambda   | 이름이 `disciplinary-committee-*`인 프로젝트 리소스                  |
 | Secrets Manager       | 이름이 `disciplinary-committee-*`인 secret과 version                 |
 | IAM                   | boundary가 강제된 runtime role 관리, Lambda/Scheduler에만 `PassRole` |
-| API Gateway           | 지정 리전의 HTTP API 관리                                            |
+| API Gateway           | 지정 리전의 HTTP API 및 해당 API 태그 관리                           |
 | EventBridge Scheduler | 프로젝트 schedule group                                              |
 | CloudWatch            | 프로젝트 alarm                                                       |
 | AWS Budgets           | 월 비용 budget 생성·수정                                             |

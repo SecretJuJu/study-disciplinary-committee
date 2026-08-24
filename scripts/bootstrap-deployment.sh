@@ -327,6 +327,7 @@ cat >"${temporary_directory}/deploy-policy.json" <<JSON
       ],
       "Resource": [
         "arn:aws:apigateway:${AWS_REGION}::/apis*",
+        "arn:aws:apigateway:${AWS_REGION}::/tags/*",
         "arn:aws:scheduler:${AWS_REGION}:${AWS_ACCOUNT_ID}:schedule-group/${PROJECT_NAME}-*"
       ]
     },
