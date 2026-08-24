@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/interactions.ts src/judge.ts src/outbox.ts src/scheduler.ts --bundle --platform=node --target=node24 --format=esm --out-extension:.js=.mjs --outdir=dist --sourcemap"
+    "build": "esbuild src/interactions.ts src/judge.ts src/outbox.ts src/scheduler.ts --bundle --platform=node --target=node24 --format=cjs --out-extension:.js=.cjs --outdir=dist --sourcemap && node -e \"for (const name of ['interactions', 'judge', 'outbox', 'scheduler']) require('./dist/' + name + '.cjs')\""
   },
   "dependencies": {
     "@disciplinary-committee/ai-judge": "workspace:*",
