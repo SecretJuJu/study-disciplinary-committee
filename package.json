@@ -1,0 +1,38 @@
+{
+  "name": "study-disciplinary-committee",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.14.0"
+  },
+  "scripts": {
+    "bootstrap:deployment": "bash scripts/bootstrap-deployment.sh",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
+    "check:discord": "tsx scripts/check-discord-setup.ts",
+    "build": "pnpm --filter @disciplinary-committee/bot-api build",
+    "format": "prettier --write --config packages/config/prettier.config.mjs .",
+    "format:check": "prettier --check --config packages/config/prettier.config.mjs .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "register:commands": "tsx scripts/register-commands.ts",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@disciplinary-committee/discord": "workspace:*",
+    "@eslint/js": "^10.0.1",
+    "@types/aws-lambda": "^8.10.162",
+    "@types/node": "^26.2.0",
+    "eslint": "^10.9.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.12",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.11",
+    "zod": "^4.4.3"
+  }
+}

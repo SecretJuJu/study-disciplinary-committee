@@ -1,0 +1,85 @@
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: pnpm build
+      - uses: aws-actions/configure-aws-credentials@v5
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v7
+      - name: Configure Pulumi stack
+        working-directory: infra
+        env:
+          PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+          PULUMI_ENVIRONMENT: ${{ vars.PULUMI_ENVIRONMENT }}
+          MONTHLY_BUDGET_USD: ${{ vars.MONTHLY_BUDGET_USD }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+          DISCORD_PUBLIC_KEY: ${{ vars.DISCORD_PUBLIC_KEY }}
+          DISCORD_DEBUG_CHANNEL_ID: ${{ vars.DISCORD_DEBUG_CHANNEL_ID }}
+          RUNTIME_PERMISSIONS_BOUNDARY_ARN: ${{ vars.RUNTIME_PERMISSIONS_BOUNDARY_ARN }}
+          BUDGET_ALERT_EMAIL: ${{ secrets.BUDGET_ALERT_EMAIL }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          pulumi login "${PULUMI_BACKEND_URL}"
+          pulumi stack select "${PULUMI_STACK}" --create --non-interactive
+          pulumi config set aws:region "${AWS_REGION}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set environment "${PULUMI_ENVIRONMENT}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set monthlyBudgetUsd "${MONTHLY_BUDGET_USD}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set discordApplicationId "${DISCORD_APPLICATION_ID}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set discordPublicKey "${DISCORD_PUBLIC_KEY}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set discordDebugChannelId "${DISCORD_DEBUG_CHANNEL_ID}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set runtimePermissionsBoundaryArn "${RUNTIME_PERMISSIONS_BOUNDARY_ARN}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set budgetAlertEmail "${BUDGET_ALERT_EMAIL}" --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set openaiApiKey "${OPENAI_API_KEY}" --secret --stack "${PULUMI_STACK}" --non-interactive
+          pulumi config set discordBotToken "${DISCORD_BOT_TOKEN}" --secret --stack "${PULUMI_STACK}" --non-interactive
+      - name: Deploy with Pulumi
+        working-directory: infra
+        env:
+          PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+        run: pulumi up --yes --skip-preview --non-interactive --stack "${PULUMI_STACK}"
+      - name: Configure Discord endpoint and commands
+        working-directory: infra
+        env:
+          PULUMI_BACKEND_URL: ${{ vars.PULUMI_BACKEND_URL }}
+          PULUMI_CONFIG_PASSPHRASE: ${{ secrets.PULUMI_CONFIG_PASSPHRASE }}
+          PULUMI_STACK: ${{ vars.PULUMI_STACK }}
+          DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_COMMAND_SCOPE: ${{ vars.DISCORD_COMMAND_SCOPE }}
+          DISCORD_COMMAND_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
+        run: |
+          set -euo pipefail
+          export DISCORD_INTERACTION_ENDPOINT="$(pulumi stack output interactionEndpoint --stack "${PULUMI_STACK}")"
+          pnpm --dir .. run register:commands

@@ -1,0 +1,12 @@
+{
+  "name": "@disciplinary-committee/ai-judge",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@disciplinary-committee/domain": "workspace:*"
+  }
+}

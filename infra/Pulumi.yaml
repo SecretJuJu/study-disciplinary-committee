@@ -1,0 +1,4 @@
+name: disciplinary-committee
+runtime:
+  name: nodejs
+description: Serverless Discord disciplinary committee bot

@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+dist/
+.env
+.env.*
+!.env.example
+.pulumi/
+Pulumi.*.yaml
+!Pulumi.example.yaml
+*.tsbuildinfo
+*.local

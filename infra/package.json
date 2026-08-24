@@ -1,0 +1,13 @@
+{
+  "name": "@disciplinary-committee/infra",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@pulumi/aws": "^7.43.0",
+    "@pulumi/pulumi": "^3.259.0"
+  }
+}

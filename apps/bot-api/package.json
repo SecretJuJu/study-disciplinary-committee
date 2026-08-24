@@ -1,0 +1,21 @@
+{
+  "name": "@disciplinary-committee/bot-api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/interactions.ts src/judge.ts src/outbox.ts src/scheduler.ts --bundle --platform=node --target=node24 --format=esm --out-extension:.js=.mjs --outdir=dist --sourcemap"
+  },
+  "dependencies": {
+    "@disciplinary-committee/ai-judge": "workspace:*",
+    "@disciplinary-committee/discord": "workspace:*",
+    "@disciplinary-committee/domain": "workspace:*",
+    "@disciplinary-committee/persistence": "workspace:*",
+    "openai": "^6.16.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "tweetnacl": "^1.0.3"
+  }
+}
