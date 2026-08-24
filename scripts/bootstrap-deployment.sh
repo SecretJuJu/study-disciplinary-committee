@@ -277,6 +277,7 @@ cat >"${temporary_directory}/deploy-policy.json" <<JSON
         "arn:aws:dynamodb:${AWS_REGION}:${AWS_ACCOUNT_ID}:table/${PROJECT_NAME}-*",
         "arn:aws:sqs:${AWS_REGION}:${AWS_ACCOUNT_ID}:${PROJECT_NAME}-*",
         "arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:function:${PROJECT_NAME}-*",
+        "arn:aws:lambda:${AWS_REGION}:${AWS_ACCOUNT_ID}:event-source-mapping:*",
         "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:${PROJECT_NAME}-*",
         "arn:aws:cloudwatch:${AWS_REGION}:${AWS_ACCOUNT_ID}:alarm:${PROJECT_NAME}-*"
       ]
