@@ -6,7 +6,7 @@ goals:
   - 심사만 SQS와 OpenAI worker로 비동기 처리한다.
   - master GitHub Actions 배포와 Discord smoke check를 통과한다.
 execution_started: true
-current_task: 5
+current_task: null
 created_at: 2026-08-25T00:25:00+09:00
 ---
 
@@ -87,30 +87,31 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ### Task 5: 문서·커밋·배포·운영 검증
 
-**Status:** in_progress
+**Status:** completed
 
 #### Subtasks
 
 - [x] **5.1** help 사용법, 설정 저장 구조, 활성 범위와 AI 경계를 `docs/`에 기록한다.
-- [ ] **5.2** 자격증명 누출 검사 후 지정 계정으로 commit/push한다.
-- [ ] **5.3** CI/Deploy 성공, Discord command 동기화, Lambda/SQS/DynamoDB 상태를 확인한다.
+- [x] **5.2** 자격증명 누출 검사 후 지정 계정으로 commit/push한다.
+- [x] **5.3** CI/Deploy 성공, Discord command 동기화, Lambda/SQS/DynamoDB 상태를 확인한다.
 
 #### Acceptance Criteria
 
-- [ ] 문서가 배포된 실제 동작과 일치한다.
-- [ ] GitHub CI와 Deploy가 성공한다.
-- [ ] Discord endpoint와 명령, AWS runtime이 정상이며 worktree가 clean이다.
+- [x] 문서가 배포된 실제 동작과 일치한다.
+- [x] GitHub CI와 Deploy가 성공한다.
+- [x] Discord endpoint와 명령, AWS runtime이 정상이며 worktree가 clean이다.
 
 ## Final Checklist
 
-- [ ] All tasks completed
+- [x] All tasks completed
 - [x] `pnpm build && pnpm check` passes
 - [x] No credential literals committed
-- [ ] Production deployment verified
+- [x] Production deployment verified
 - [x] No scope creep
 
 ## Execution Notes
 
+- 2026-08-25 01:25 KST: 최초 Deploy `32750246655`는 event-source-mapping ARN이 deploy role IAM 리소스 범위에 없어 실패했다. live policy와 bootstrap에 해당 ARN만 최소 추가한 `cbdf90d` 이후 CI `32750583264`와 Deploy `32750583286`이 성공했다. AWS에서 Node 24 interactions/judge, Enabled judge event source, 빈 SQS/DLQ, ACTIVE DynamoDB와 월 $3 Budget을 확인했고, Discord에서 endpoint·guild command 4개·필수 채널 권한·테스트 메시지와 unsigned 요청 401을 확인했다.
 - 2026-08-25 01:19 KST: Task 5 로컬 단계에서 production 활성 명령·설정·deferred/follow-up·환경변수/IAM·안전 진단·미활성 Scheduler 범위를 docs와 일치시켰다. 자격증명 패턴 및 `.env` 추적 검사는 0건이었고 `pnpm build && pnpm check`에서 15개 파일 66개 테스트가 통과했다. 외부 CI/Deploy와 AWS/Discord 상태는 commit/push 후 최종 보고에서만 증거를 남긴다.
 - 2026-08-25 01:13 KST: Task 4 완료. strict Zod/Secrets Manager cache/partial batch response를 가진 Judge SQS Lambda를 추가하고, interaction·Judge 역할을 분리해 Node 24 Lambda와 event source를 Pulumi에 연결했다. 기존 verdict 조회와 최신 stats 재조회로 Discord 후속응답 실패 및 동시 심사 재시도를 안전하게 했고 `pnpm build && pnpm check`에서 15개 파일 66개 테스트가 통과했다.
 - 2026-08-25 01:03 KST: Task 3 완료. `/help`, `/설정`, `/내기록`은 type 4 ephemeral로 즉시 처리하고 `/심사`만 DynamoDB 저장과 SQS enqueue가 모두 성공한 뒤 type 5를 반환한다. interaction 번들에 OpenAI client/model 문자열이 없음을 확인했고 `pnpm build && pnpm check`에서 14개 파일 58개 테스트가 통과했다.
