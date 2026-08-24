@@ -75,6 +75,7 @@ updated_at: 2026-08-24T12:16:00Z
 - 2026-08-24: 코드·스크립트 범위 최종 검증 완료. 외부 GitHub/AWS/Discord 설정 및 환경 QA는 사용자 지시에 따라 보류하며, 배포 workflow와 `pulumi up` 실행은 포함하지 않는다.
 - 2026-08-24: Discord 운영 디버깅 요구를 추가했다. `/help`, 관리자 전용 `/운영상태`·`/최근오류` manifest와 안전 진단 이벤트 기반 코드를 추가했다. 알림에는 민감 데이터·원시 오류를 넣지 않으며, 실제 Discord 채널 생성·명령 등록·배포는 수행하지 않는다.
 - 2026-08-24: 관리자 AWS CLI profile로 한 번 실행하는 bootstrap, `master` 전용 GitHub OIDC deploy role, private S3 Pulumi backend, GitHub Actions 변수·시크릿 설정, 자동 Pulumi/Discord 배포 workflow를 추가했다. 스크립트와 workflow는 작성·로컬 검증만 하며 AWS/GitHub/Discord 외부 변경은 실행하지 않았다.
+- 2026-08-25: AWS/GitHub bootstrap과 production 배포를 실행했다. GitHub OIDC의 불변 owner/repository ID subject, API Gateway 태그, Pulumi Lambda 상태 조회 권한을 최소 범위로 보완했고 Node.js 24 Lambda를 CommonJS로 번들링했다. Actions run `32743671582`에서 Pulumi 배포와 Discord endpoint·guild command 동기화가 성공했다.
 
 ## Completion Checklist
 

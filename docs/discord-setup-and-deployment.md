@@ -77,10 +77,10 @@ GitHub OIDC는 장기 AWS access key를 GitHub secret에 보관하지 않고 AWS
 
 ### 워크플로
 
-| 파일         | 트리거            | 수행                                                                   |
-| ------------ | ----------------- | ---------------------------------------------------------------------- |
-| `ci.yml`     | PR, `master` push | Node 24/pnpm 설치, format, lint, typecheck, test, build                |
-| `deploy.yml` | `master` push     | CI 재검증, OIDC, `pulumi up`, Discord endpoint와 guild commands 동기화 |
+| 파일         | 트리거            | 수행                                                                    |
+| ------------ | ----------------- | ----------------------------------------------------------------------- |
+| `ci.yml`     | PR, `master` push | Node 24/pnpm 설치, format, lint, typecheck, test, build                 |
+| `deploy.yml` | `master` push     | CI 재검증, OIDC, `pulumi up`, Discord 동기화, 권한 점검과 테스트 메시지 |
 
 `permissions`는 `contents: read`, 배포 job에만 `id-token: write`를 둔다. GitHub secret은 command output에 출력하지 않는다. [Pulumi GitHub Actions](https://www.pulumi.com/docs/iac/operations/continuous-delivery/github-actions/)
 

@@ -4,7 +4,7 @@
 >
 > 실행 주체: AWS 리소스와 IAM/OIDC를 만들 수 있는 관리자 자격증명
 
-`scripts/bootstrap-deployment.sh`를 한 번 실행하면 Pulumi state용 비공개 S3 bucket, GitHub OIDC provider, `master` 전용 배포 role, repository Actions 변수·시크릿을 구성한다. 이후 `master` push는 CI → build → Pulumi 배포 → Discord endpoint·guild command 동기화를 순서대로 실행한다.
+`scripts/bootstrap-deployment.sh`를 한 번 실행하면 Pulumi state용 비공개 S3 bucket, GitHub OIDC provider, `master` 전용 배포 role, repository Actions 변수·시크릿을 구성한다. 이후 `master` push는 CI → build → Pulumi 배포 → Discord endpoint·guild command 동기화 → 권한 점검·debug 채널 테스트 메시지를 순서대로 실행한다.
 
 AWS root 사용자는 IAM user가 아니다. 기술적으로 root 자격증명으로도 실행할 수 있지만 장기 access key를 만들지 말고, 가능하면 `AdministratorAccess`가 있는 단기 관리자 profile로 이 bootstrap만 실행한다. GitHub Actions에는 AWS access key를 저장하지 않는다.
 
@@ -84,6 +84,7 @@ master push
   → pulumi up
   → Pulumi output의 HTTPS endpoint를 Discord Application에 반영
   → guild commands 동기화
+  → Discord identity/guild/channel 권한 검증 및 debug 테스트 메시지
 ```
 
 배포 중간 취소로 state가 불명확해지는 것을 피하기 위해 deployment concurrency는 하나로 직렬화하고 실행 중인 배포는 자동 취소하지 않는다. PR 코드에는 배포 role을 주지 않으며 AWS preview workflow도 두지 않는다.

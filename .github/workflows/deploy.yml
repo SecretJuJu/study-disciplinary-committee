@@ -86,3 +86,11 @@ jobs:
           set -euo pipefail
           export DISCORD_INTERACTION_ENDPOINT="$(pulumi stack output interactionEndpoint --stack "${PULUMI_STACK}")"
           pnpm --dir .. run register:commands
+      - name: Verify Discord setup
+        env:
+          DISCORD_APPLICATION_ID: ${{ vars.DISCORD_APPLICATION_ID }}
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_GUILD_ID: ${{ vars.DISCORD_GUILD_ID }}
+          DISCORD_DEBUG_CHANNEL_ID: ${{ vars.DISCORD_DEBUG_CHANNEL_ID }}
+          DISCORD_SEND_TEST_MESSAGE: 'true'
+        run: pnpm check:discord
