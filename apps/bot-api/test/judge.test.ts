@@ -118,6 +118,27 @@ describe('JudgeWorker', () => {
     expect(finalizeJudgment.mock.calls[1]?.[0].stats).toEqual(refreshedStats);
   });
 
+  it('classifies a persistence failure without logging the raw storage error', async () => {
+    const diagnostics: string[] = [];
+    const worker = new JudgeWorker(
+      model(),
+      repository({
+        finalizeJudgment: async () => Promise.reject(new Error('sensitive DynamoDB detail')),
+      }),
+      { editOriginal: async () => undefined },
+      {
+        report: async (event) => {
+          diagnostics.push(event.code);
+        },
+      },
+    );
+
+    await expect(worker.process(job)).rejects.toMatchObject({
+      diagnosticCode: 'judgment_persist_failed',
+    });
+    expect(diagnostics).toEqual(['judgment_persist_failed']);
+  });
+
   it('can finish a retry after Discord failed following a durable verdict', async () => {
     let persisted: Judgment | undefined;
     const modelClient = model();

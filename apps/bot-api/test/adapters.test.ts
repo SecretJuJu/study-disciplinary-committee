@@ -88,4 +88,19 @@ describe('OpenAIResponsesClient', () => {
       diagnosticCode: 'ai_output_incomplete',
     });
   });
+
+  it('classifies an unrecognized OpenAI client failure by stage', async () => {
+    const client = new OpenAIResponsesClient('test-api-key', {
+      create: async () => Promise.reject(new Error('sensitive connection detail')),
+    });
+
+    await expect(
+      client.create(
+        judgeRequest({
+          submission: { whatStudied: 'test' },
+          disciplinaryPoints: 0,
+        }),
+      ),
+    ).rejects.toMatchObject({ diagnosticCode: 'ai_request_failed' });
+  });
 });

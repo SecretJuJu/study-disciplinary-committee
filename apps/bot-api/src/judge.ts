@@ -14,6 +14,7 @@ import type { DiagnosticReporter } from './diagnostics.js';
 import {
   creditExhaustedMessage,
   NonRetryableModelError,
+  RetryableJudgeError,
   RetryableModelError,
 } from './model-errors.js';
 
@@ -74,17 +75,23 @@ export class JudgeWorker {
     try {
       job = judgeJobSchema.parse(rawJob);
       sessionId = job.sessionId;
-      const existingJudgment = await this.repository.getFinalizedJudgment(
-        job.sessionId,
-        job.userId,
-      );
+      let existingJudgment: Judgment | undefined;
+      try {
+        existingJudgment = await this.repository.getFinalizedJudgment(job.sessionId, job.userId);
+      } catch (error) {
+        throw new RetryableJudgeError('judgment_lookup_failed', { cause: error });
+      }
       if (existingJudgment !== undefined) {
         await this.publish(job, existingJudgment);
         return;
       }
 
-      const latestStats =
-        (await this.repository.getUserStats(job.guildId, job.userId)) ?? job.stats;
+      let latestStats: UserStats;
+      try {
+        latestStats = (await this.repository.getUserStats(job.guildId, job.userId)) ?? job.stats;
+      } catch (error) {
+        throw new RetryableJudgeError('stats_read_failed', { cause: error });
+      }
       const response = await this.model.create(
         judgeRequest({
           submission: job.submission,
@@ -97,7 +104,12 @@ export class JudgeWorker {
       } catch (error) {
         throw new RetryableModelError('ai_output_invalid', { cause: error });
       }
-      const finalizedJudgment = await this.finalize(job, judgment, latestStats, finalizedAt);
+      let finalizedJudgment: Judgment;
+      try {
+        finalizedJudgment = await this.finalize(job, judgment, latestStats, finalizedAt);
+      } catch (error) {
+        throw new RetryableJudgeError('judgment_persist_failed', { cause: error });
+      }
       await this.publish(job, finalizedJudgment);
     } catch (error) {
       await this.reportFailure(error, sessionId);

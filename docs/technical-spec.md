@@ -106,7 +106,7 @@ Judge 실패는 운영자 전용 debug channel에 `component`, 안전한 원인 
 
 동일한 필드만 `event: operational_diagnostic` 구조화 JSON으로 Judge Lambda의 CloudWatch Logs에 기록해 AWS CLI에서도 실패 단계를 확인할 수 있게 한다.
 
-OpenAI가 `credit_balance_exhausted`를 반환하면 안전한 `ai_credit_exhausted`로 변환한다. 크레딧 소진은 같은 요청을 재시도해도 성공하지 않으므로 Discord 원본 응답을 충전 후 재실행 안내로 종료하고 SQS message를 성공 처리한다. `ai_output_incomplete`, `ai_output_invalid`, `discord_service_unavailable`, `discord_request_rejected`는 실패 단계를 구분하면서 원문을 노출하지 않는다. 일시적인 외부 장애와 Discord 게시 실패는 기존 SQS 재시도 정책을 유지한다.
+OpenAI가 `credit_balance_exhausted`를 반환하면 안전한 `ai_credit_exhausted`로 변환한다. 크레딧 소진은 같은 요청을 재시도해도 성공하지 않으므로 Discord 원본 응답을 충전 후 재실행 안내로 종료하고 SQS message를 성공 처리한다. `ai_request_failed`, `ai_output_incomplete`, `ai_output_invalid`, `judgment_lookup_failed`, `stats_read_failed`, `judgment_persist_failed`, `discord_service_unavailable`, `discord_request_rejected`는 실패 단계를 구분하면서 원문을 노출하지 않는다. 일시적인 외부 장애와 Discord 게시 실패는 기존 SQS 재시도 정책을 유지한다.
 
 ## 8. 품질과 배포
 

@@ -50,6 +50,30 @@ function failureDetails(error: unknown): Pick<DiagnosticEvent, 'code' | 'summary
       summary: 'AI 응답이 판결 형식 검증을 통과하지 못했습니다.',
     };
   }
+  if (diagnosticCode === 'ai_request_failed') {
+    return {
+      code: 'ai_request_failed',
+      summary: 'OpenAI API 요청을 완료하지 못했습니다.',
+    };
+  }
+  if (diagnosticCode === 'judgment_lookup_failed') {
+    return {
+      code: 'judgment_lookup_failed',
+      summary: '기존 판결 조회에 실패했습니다.',
+    };
+  }
+  if (diagnosticCode === 'stats_read_failed') {
+    return {
+      code: 'stats_read_failed',
+      summary: '사용자 심사 통계 조회에 실패했습니다.',
+    };
+  }
+  if (diagnosticCode === 'judgment_persist_failed') {
+    return {
+      code: 'judgment_persist_failed',
+      summary: '판결과 통계 저장에 실패했습니다.',
+    };
+  }
   if (diagnosticCode === 'discord_service_unavailable') {
     return {
       code: 'discord_service_unavailable',

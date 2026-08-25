@@ -130,6 +130,7 @@ created_at: 2026-08-25T00:25:00+09:00
 
 - 2026-08-25 09:10 KST: session `1541599553558544454` 실패를 안전하게 재현했다. Luna 모델 조회는 HTTP 200이지만 Responses 생성은 HTTP 429, `credit_balance_exhausted`/`insufficient_quota`로 거절되어 요청 형식이 아니라 OpenAI 조직 크레딧 0이 원인이다. 비밀값과 제출 원문은 출력하지 않았다.
 - 2026-08-25 09:14 KST: 충전 뒤 session `1541600541266944041`은 제출만 저장되고 판결 전 `processing_failed`가 발생했다. 동일 저장 제출의 Luna/high/Structured Output 재현은 완료·검증 성공했다. high reasoning과 JSON이 공유하는 출력 상한의 간헐적 소진을 줄이도록 700→2,000으로 조정하고 AI 출력·Discord 후속응답 실패 코드를 분리한다.
+- 2026-08-25 09:22 KST: 새 코드 재시도도 Lambda timeout/throttle 없이 4.8초 만에 `processing_failed`로 끝났다. 동일 최신 제출의 OpenAI 출력은 별도 재현에서 완료·검증 성공했으므로 조회·OpenAI 요청·저장 단계를 안전 코드로 추가 분리한다. CloudWatch에는 safe structured diagnostic만 남긴다.
 
 - 2026-08-25 01:25 KST: 최초 Deploy `32750246655`는 event-source-mapping ARN이 deploy role IAM 리소스 범위에 없어 실패했다. live policy와 bootstrap에 해당 ARN만 최소 추가한 `cbdf90d` 이후 CI `32750583264`와 Deploy `32750583286`이 성공했다. AWS에서 Node 24 interactions/judge, Enabled judge event source, 빈 SQS/DLQ, ACTIVE DynamoDB와 월 $3 Budget을 확인했고, Discord에서 endpoint·guild command 4개·필수 채널 권한·테스트 메시지와 unsigned 요청 401을 확인했다.
 - 2026-08-25 01:19 KST: Task 5 로컬 단계에서 production 활성 명령·설정·deferred/follow-up·환경변수/IAM·안전 진단·미활성 Scheduler 범위를 docs와 일치시켰다. 자격증명 패턴 및 `.env` 추적 검사는 0건이었고 `pnpm build && pnpm check`에서 15개 파일 66개 테스트가 통과했다. 외부 CI/Deploy와 AWS/Discord 상태는 commit/push 후 최종 보고에서만 증거를 남긴다.

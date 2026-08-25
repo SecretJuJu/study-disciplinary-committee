@@ -52,6 +52,10 @@ describe('diagnostics', () => {
   it.each([
     ['ai_output_incomplete', 'AI 응답이 출력 한도 안에서 완료되지 않았습니다.'],
     ['ai_output_invalid', 'AI 응답이 판결 형식 검증을 통과하지 못했습니다.'],
+    ['ai_request_failed', 'OpenAI API 요청을 완료하지 못했습니다.'],
+    ['judgment_lookup_failed', '기존 판결 조회에 실패했습니다.'],
+    ['stats_read_failed', '사용자 심사 통계 조회에 실패했습니다.'],
+    ['judgment_persist_failed', '판결과 통계 저장에 실패했습니다.'],
     ['discord_request_rejected', 'Discord API가 후속 응답 요청을 거절했습니다.'],
   ])('formats the safe diagnostic code %s', (diagnosticCode, summary) => {
     const event = diagnosticForFailure({

@@ -49,10 +49,13 @@ export class OpenAIResponsesClient implements ModelClient {
       }
       return { outputText: response.output_text };
     } catch (error) {
+      if (error instanceof RetryableModelError) {
+        throw error;
+      }
       if (errorCodeOf(error) === 'credit_balance_exhausted') {
         throw new NonRetryableModelError({ cause: error });
       }
-      throw error;
+      throw new RetryableModelError('ai_request_failed', { cause: error });
     }
   }
 }

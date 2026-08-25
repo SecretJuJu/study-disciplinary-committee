@@ -10,7 +10,8 @@ export class NonRetryableModelError extends Error {
   }
 }
 
-export type RetryableModelFailureCode = 'ai_output_incomplete' | 'ai_output_invalid';
+export type RetryableModelFailureCode =
+  'ai_output_incomplete' | 'ai_output_invalid' | 'ai_request_failed';
 
 export class RetryableModelError extends Error {
   public constructor(
@@ -19,5 +20,18 @@ export class RetryableModelError extends Error {
   ) {
     super('Retryable model processing failure.', options);
     this.name = 'RetryableModelError';
+  }
+}
+
+export type RetryableJudgeFailureCode =
+  'judgment_lookup_failed' | 'stats_read_failed' | 'judgment_persist_failed';
+
+export class RetryableJudgeError extends Error {
+  public constructor(
+    public readonly diagnosticCode: RetryableJudgeFailureCode,
+    options?: ErrorOptions,
+  ) {
+    super('Retryable judge processing failure.', options);
+    this.name = 'RetryableJudgeError';
   }
 }
