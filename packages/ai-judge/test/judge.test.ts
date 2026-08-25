@@ -11,7 +11,7 @@ describe('judge request', () => {
     expect(request).toMatchObject({
       model: 'gpt-5.6-luna',
       store: false,
-      max_output_tokens: 700,
+      max_output_tokens: 2_000,
       reasoning: { effort: 'high', context: 'current_turn' },
     });
     expect(buildJudgeInput({ submission, disciplinaryPoints: 4 })).toContain(

@@ -2,6 +2,7 @@ import { defaultScorePolicy, type Judgment, type UserStats } from '@disciplinary
 import { describe, expect, it, vi } from 'vitest';
 
 import { JudgeWorker, type JudgeJob, type JudgeRepository } from '../src/judge.js';
+import { creditExhaustedMessage, NonRetryableModelError } from '../src/model-errors.js';
 
 const stats: UserStats = {
   userId: '123456789012345678',
@@ -156,6 +157,53 @@ describe('JudgeWorker', () => {
 
     await expect(worker.process(job)).rejects.toThrow('OPENAI_API_KEY=do-not-send');
     expect(diagnostics).toEqual(['processing_failed']);
+  });
+
+  it('classifies invalid structured output and keeps the job retryable', async () => {
+    const diagnostics: string[] = [];
+    const worker = new JudgeWorker(
+      { create: async () => ({ outputText: '' }) },
+      repository(),
+      { editOriginal: async () => undefined },
+      {
+        report: async (event) => {
+          diagnostics.push(event.code);
+        },
+      },
+    );
+
+    await expect(worker.process(job)).rejects.toMatchObject({
+      diagnosticCode: 'ai_output_invalid',
+    });
+    expect(diagnostics).toEqual(['ai_output_invalid']);
+  });
+
+  it('ends the deferred response without retrying when AI credit is exhausted', async () => {
+    const diagnostics: string[] = [];
+    const finalizeJudgment = vi.fn<JudgeRepository['finalizeJudgment']>();
+    const editOriginal = vi.fn(async () => undefined);
+    const worker = new JudgeWorker(
+      {
+        create: async () => Promise.reject(new NonRetryableModelError()),
+      },
+      repository({ finalizeJudgment }),
+      { editOriginal },
+      {
+        report: async (event) => {
+          diagnostics.push(event.code);
+        },
+      },
+    );
+
+    await expect(worker.process(job)).resolves.toBeUndefined();
+
+    expect(finalizeJudgment).not.toHaveBeenCalled();
+    expect(editOriginal).toHaveBeenCalledWith({
+      applicationId: job.applicationId,
+      interactionToken: job.interactionToken,
+      content: creditExhaustedMessage,
+    });
+    expect(diagnostics).toEqual(['ai_credit_exhausted']);
   });
 
   it('rejects a job whose embedded stats belong to another user', async () => {

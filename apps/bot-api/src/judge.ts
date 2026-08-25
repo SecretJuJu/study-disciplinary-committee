@@ -11,6 +11,11 @@ import type { FinalizeJudgmentInput } from '@disciplinary-committee/persistence'
 import { z } from 'zod';
 
 import type { DiagnosticReporter } from './diagnostics.js';
+import {
+  creditExhaustedMessage,
+  NonRetryableModelError,
+  RetryableModelError,
+} from './model-errors.js';
 
 const judgeJobSchema = z
   .object({
@@ -65,8 +70,9 @@ export class JudgeWorker {
   ) {}
   public async process(rawJob: unknown, finalizedAt = new Date().toISOString()): Promise<void> {
     let sessionId = 'unknown';
+    let job: JudgeJob | undefined;
     try {
-      const job = judgeJobSchema.parse(rawJob);
+      job = judgeJobSchema.parse(rawJob);
       sessionId = job.sessionId;
       const existingJudgment = await this.repository.getFinalizedJudgment(
         job.sessionId,
@@ -85,11 +91,24 @@ export class JudgeWorker {
           disciplinaryPoints: latestStats.disciplinaryPoints,
         }),
       );
-      const judgment = parseJudgment(response.outputText);
+      let judgment: Judgment;
+      try {
+        judgment = parseJudgment(response.outputText);
+      } catch (error) {
+        throw new RetryableModelError('ai_output_invalid', { cause: error });
+      }
       const finalizedJudgment = await this.finalize(job, judgment, latestStats, finalizedAt);
       await this.publish(job, finalizedJudgment);
     } catch (error) {
       await this.reportFailure(error, sessionId);
+      if (job !== undefined && error instanceof NonRetryableModelError) {
+        await this.discord.editOriginal({
+          applicationId: job.applicationId,
+          interactionToken: job.interactionToken,
+          content: creditExhaustedMessage,
+        });
+        return;
+      }
       throw error;
     }
   }

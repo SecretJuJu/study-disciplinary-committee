@@ -82,6 +82,10 @@ DISCORD_SEND_TEST_MESSAGE=false pnpm check:discord
 
 Judge의 재시도 가능한 실패는 debug channel에 안전한 원인 코드와 상관 ID만 게시한다. 제출 원문, token, secret, 사용자 입력, 원시 exception은 금지한다. Discord 알림 실패는 원래 SQS 실패를 숨기지 않으며 message는 재시도 후 DLQ로 이동한다.
 
+`ai_credit_exhausted`는 OpenAI 프로젝트 크레딧이 0일 때 발생하는 비재시도 오류다. 이 경우 bot은 원본 deferred 응답을 충전 후 `/심사` 재실행 안내로 바꾸고 SQS 처리를 종료한다. [OpenAI Billing](https://platform.openai.com/settings/organization/billing/)에서 크레딧을 추가해야 실제 심사가 다시 동작한다. 이미 실패한 제출은 자동 판결하지 않으므로 충전 후 새 `/심사`를 실행한다.
+
+그 외 AI 실패는 `ai_output_incomplete` 또는 `ai_output_invalid`, Discord 후속응답 실패는 `discord_service_unavailable` 또는 `discord_request_rejected`로 구분한다. 앞의 두 오류는 SQS가 다시 심사하며, Discord 오류는 이미 저장된 판결을 재사용해 후속응답만 다시 게시한다.
+
 Discord에서 직접 확인할 최소 시나리오는 다음 순서다.
 
 1. 관리자가 `/설정 저장`을 실행한다.

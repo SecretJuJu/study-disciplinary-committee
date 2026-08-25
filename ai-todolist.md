@@ -6,7 +6,7 @@ goals:
   - 심사만 SQS와 OpenAI worker로 비동기 처리한다.
   - master GitHub Actions 배포와 Discord smoke check를 통과한다.
 execution_started: true
-current_task: null
+current_task: 6
 created_at: 2026-08-25T00:25:00+09:00
 ---
 
@@ -101,15 +101,35 @@ created_at: 2026-08-25T00:25:00+09:00
 - [x] GitHub CI와 Deploy가 성공한다.
 - [x] Discord endpoint와 명령, AWS runtime이 정상이며 worktree가 clean이다.
 
+### Task 6: OpenAI 크레딧 소진 오류 처리
+
+**Status:** in_progress
+
+#### Subtasks
+
+- [ ] **6.1** OpenAI `credit_balance_exhausted`를 비재시도 오류로 안전하게 분류한다.
+- [ ] **6.2** Discord 원본 응답의 무기한 deferred 상태를 명확한 안내로 종료한다.
+- [ ] **6.3** debug 진단 코드·테스트·운영 문서를 보정하고 production에 배포한다.
+
+#### Acceptance Criteria
+
+- [ ] 크레딧 소진 시 `ai_credit_exhausted` 운영 알림이 기록된다.
+- [ ] 사용자의 `/심사` 응답은 “생각 중”에 남지 않고 충전 후 재시도 안내로 바뀐다.
+- [ ] 해당 SQS 메시지는 불필요하게 재시도하거나 DLQ로 이동하지 않는다.
+- [ ] `pnpm build && pnpm check`, CI와 Deploy가 성공한다.
+
 ## Final Checklist
 
-- [x] All tasks completed
+- [ ] All tasks completed
 - [x] `pnpm build && pnpm check` passes
 - [x] No credential literals committed
-- [x] Production deployment verified
+- [ ] Production deployment verified
 - [x] No scope creep
 
 ## Execution Notes
+
+- 2026-08-25 09:10 KST: session `1541599553558544454` 실패를 안전하게 재현했다. Luna 모델 조회는 HTTP 200이지만 Responses 생성은 HTTP 429, `credit_balance_exhausted`/`insufficient_quota`로 거절되어 요청 형식이 아니라 OpenAI 조직 크레딧 0이 원인이다. 비밀값과 제출 원문은 출력하지 않았다.
+- 2026-08-25 09:14 KST: 충전 뒤 session `1541600541266944041`은 제출만 저장되고 판결 전 `processing_failed`가 발생했다. 동일 저장 제출의 Luna/high/Structured Output 재현은 완료·검증 성공했다. high reasoning과 JSON이 공유하는 출력 상한의 간헐적 소진을 줄이도록 700→2,000으로 조정하고 AI 출력·Discord 후속응답 실패 코드를 분리한다.
 
 - 2026-08-25 01:25 KST: 최초 Deploy `32750246655`는 event-source-mapping ARN이 deploy role IAM 리소스 범위에 없어 실패했다. live policy와 bootstrap에 해당 ARN만 최소 추가한 `cbdf90d` 이후 CI `32750583264`와 Deploy `32750583286`이 성공했다. AWS에서 Node 24 interactions/judge, Enabled judge event source, 빈 SQS/DLQ, ACTIVE DynamoDB와 월 $3 Budget을 확인했고, Discord에서 endpoint·guild command 4개·필수 채널 권한·테스트 메시지와 unsigned 요청 401을 확인했다.
 - 2026-08-25 01:19 KST: Task 5 로컬 단계에서 production 활성 명령·설정·deferred/follow-up·환경변수/IAM·안전 진단·미활성 Scheduler 범위를 docs와 일치시켰다. 자격증명 패턴 및 `.env` 추적 검사는 0건이었고 `pnpm build && pnpm check`에서 15개 파일 66개 테스트가 통과했다. 외부 CI/Deploy와 AWS/Discord 상태는 commit/push 후 최종 보고에서만 증거를 남긴다.

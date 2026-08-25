@@ -190,3 +190,19 @@
 ### NEXT TASK TIPS
 
 - 자동 Discord smoke는 유료 OpenAI 호출을 하지 않는다. `/심사` 최종 판결과 `/내기록` 증가 확인은 사용자가 Discord에서 한 번 실행해야 한다.
+
+[2026-08-25 09:10] - OpenAI 크레딧 소진 운영 처리
+
+### DISCOVERED ISSUES
+
+- production 키와 Luna 모델 접근은 유효하지만 Responses 생성은 `429 credit_balance_exhausted`로 거절됐다.
+- 기존 generic 4xx 처리는 debug 원인을 `external_request_rejected`로만 표시하고 Discord 원본 응답을 계속 deferred 상태로 남겼다.
+
+### DECISIONS
+
+- 크레딧 소진만 명시적인 비재시도 모델 오류로 변환한다. 일시적 rate limit과 5xx는 기존 SQS 재시도를 유지한다.
+- 비재시도 오류는 safe diagnostic을 보낸 뒤 Discord 원본 응답을 충전 후 새 `/심사` 실행 안내로 수정하고 SQS message를 성공 처리한다.
+
+### LEARNINGS
+
+- 모델 조회 HTTP 200은 생성 크레딧을 보장하지 않는다. 배포 smoke와 별도로 최소 Responses 호출 또는 OpenAI usage/billing 확인이 필요하다.

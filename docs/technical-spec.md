@@ -81,7 +81,7 @@ SK = SETTINGS
 
 기존 설정 갱신은 채널만 바꾸고 정책을 보존하며 `configVersion`을 1 올린다. DynamoDB 조건식은 읽은 버전과 현재 버전이 같은 경우에만 쓰기를 허용해 동시 갱신의 stale write를 차단한다. 정기 Scheduler가 활성화된다는 의미는 아니며, 현재 `cadenceMinutes`와 제출 창은 향후 자동 회차를 위한 저장 값이다.
 
-장기 대화 기억은 사용하지 않는다. AI에는 현재 제출, 현재 누적 징계 점수, 고정 심사 규칙만 전달한다. 이전 제출 원문·판결문·Discord 채널 기록·`previous_response_id`는 보내지 않으며 `store: false`, `reasoning.context: current_turn`을 사용한다. 제출 원문과 interaction 기반 회차에는 90일 TTL을 둔다. 판결과 집계는 DynamoDB 조건부 transaction으로 한 번만 반영한다.
+장기 대화 기억은 사용하지 않는다. AI에는 현재 제출, 현재 누적 징계 점수, 고정 심사 규칙만 전달한다. 이전 제출 원문·판결문·Discord 채널 기록·`previous_response_id`는 보내지 않으며 `store: false`, `reasoning.context: current_turn`을 사용한다. `high` reasoning 토큰과 가시 JSON이 같은 한도를 사용하므로 `max_output_tokens`는 2,000으로 제한한다. 제출 원문과 interaction 기반 회차에는 90일 TTL을 둔다. 판결과 집계는 DynamoDB 조건부 transaction으로 한 번만 반영한다.
 
 ## 5. 비동기 신뢰성
 
@@ -103,6 +103,8 @@ SK = SETTINGS
 ## 7. 안전 진단
 
 Judge 실패는 운영자 전용 debug channel에 `component`, 안전한 원인 코드, UTC 시각, 상관 ID만 보낸다. 제출 원문, 사용자 원문, Discord interaction token, bot token, OpenAI key, 원시 exception message는 보내거나 로그에 기록하지 않는다. 진단 전송 실패는 원래 SQS 재시도를 막지 않는다.
+
+OpenAI가 `credit_balance_exhausted`를 반환하면 안전한 `ai_credit_exhausted`로 변환한다. 크레딧 소진은 같은 요청을 재시도해도 성공하지 않으므로 Discord 원본 응답을 충전 후 재실행 안내로 종료하고 SQS message를 성공 처리한다. `ai_output_incomplete`, `ai_output_invalid`, `discord_service_unavailable`, `discord_request_rejected`는 실패 단계를 구분하면서 원문을 노출하지 않는다. 일시적인 외부 장애와 Discord 게시 실패는 기존 SQS 재시도 정책을 유지한다.
 
 ## 8. 품질과 배포
 

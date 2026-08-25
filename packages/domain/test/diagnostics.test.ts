@@ -30,4 +30,37 @@ describe('diagnostics', () => {
       summary: '외부 서비스가 일시적으로 응답하지 않습니다.',
     });
   });
+
+  it('classifies exhausted AI credit without exposing the upstream message', () => {
+    const event = diagnosticForFailure({
+      component: 'judge',
+      correlationId: 'session:s-1',
+      error: {
+        diagnosticCode: 'ai_credit_exhausted',
+        message: 'sensitive upstream billing detail',
+      },
+      occurredAt: '2026-08-24T12:00:00.000Z',
+    });
+
+    expect(event).toMatchObject({
+      code: 'ai_credit_exhausted',
+      summary: 'OpenAI API 크레딧이 소진되었습니다.',
+    });
+    expect(formatDiagnosticForDiscord(event)).not.toContain('sensitive upstream billing detail');
+  });
+
+  it.each([
+    ['ai_output_incomplete', 'AI 응답이 출력 한도 안에서 완료되지 않았습니다.'],
+    ['ai_output_invalid', 'AI 응답이 판결 형식 검증을 통과하지 못했습니다.'],
+    ['discord_request_rejected', 'Discord API가 후속 응답 요청을 거절했습니다.'],
+  ])('formats the safe diagnostic code %s', (diagnosticCode, summary) => {
+    const event = diagnosticForFailure({
+      component: 'judge',
+      correlationId: 'session:s-1',
+      error: { diagnosticCode },
+      occurredAt: '2026-08-24T12:00:00.000Z',
+    });
+
+    expect(event).toMatchObject({ code: diagnosticCode, summary });
+  });
 });
