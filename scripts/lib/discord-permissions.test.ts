@@ -16,7 +16,13 @@ describe('effectiveChannelPermissions', () => {
         { id: 'guild', permissions: String(discordPermission.viewChannel) },
         {
           id: 'bot-role',
-          permissions: String(discordPermission.sendMessages | discordPermission.embedLinks),
+          permissions: String(
+            discordPermission.sendMessages |
+              discordPermission.embedLinks |
+              discordPermission.readMessageHistory |
+              discordPermission.createPublicThreads |
+              discordPermission.sendMessagesInThreads,
+          ),
         },
       ],
       overwrites: [
@@ -39,6 +45,9 @@ describe('effectiveChannelPermissions', () => {
     expect(hasDiscordPermission(permissions, discordPermission.viewChannel)).toBe(true);
     expect(hasDiscordPermission(permissions, discordPermission.sendMessages)).toBe(true);
     expect(hasDiscordPermission(permissions, discordPermission.embedLinks)).toBe(true);
+    expect(hasDiscordPermission(permissions, discordPermission.readMessageHistory)).toBe(true);
+    expect(hasDiscordPermission(permissions, discordPermission.createPublicThreads)).toBe(true);
+    expect(hasDiscordPermission(permissions, discordPermission.sendMessagesInThreads)).toBe(true);
   });
 
   it('treats administrator as having every checked permission', () => {

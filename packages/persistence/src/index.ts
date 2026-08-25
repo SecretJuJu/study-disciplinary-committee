@@ -1,10 +1,12 @@
 export { DynamoReviewRepository } from './repository.js';
 export type {
   CreateAdHocReviewInput,
+  CreateThreadReviewInput,
   FinalizeAbsenceInput,
   FinalizeJudgmentInput,
   PersistedSubmission,
   SaveGuildSettingsInput,
+  FinalizeThreadJudgmentInput,
 } from './repository.js';
 export {
   guildPk,
@@ -19,6 +21,9 @@ export {
 export type {
   GuildSettingsRecord,
   ReviewSessionRecord,
+  ThreadReviewSession,
+  ThreadReviewSessionRecord,
+  ThreadReviewState,
   SubmissionRecord,
   UserStatsRecord,
   VerdictRecord,

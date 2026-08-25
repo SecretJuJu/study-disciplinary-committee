@@ -18,6 +18,30 @@ export type ReviewSessionRecord = {
   configVersion: number;
 };
 
+export type ThreadReviewState = 'draft' | 'queued' | 'judging' | 'finalized' | 'cancelled';
+
+export type ThreadReviewSession = {
+  sessionId: string;
+  guildId: string;
+  ownerId: string;
+  channelId: string;
+  state: ThreadReviewState;
+  createdAt: string;
+  deadlineAt: string;
+  expiresAt: number;
+  configVersion: number;
+  anchorMessageId?: string | undefined;
+  threadId?: string | undefined;
+  leaseUntil?: string | undefined;
+  claimedAt?: string | undefined;
+};
+
+export type ThreadReviewSessionRecord = ThreadReviewSession & {
+  PK: string;
+  SK: string;
+  entityType: 'ThreadReviewSession';
+};
+
 export type SubmissionRecord = {
   PK: string;
   SK: string;

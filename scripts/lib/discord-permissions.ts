@@ -3,7 +3,10 @@ export const discordPermission = {
   viewChannel: 1n << 10n,
   sendMessages: 1n << 11n,
   embedLinks: 1n << 14n,
+  readMessageHistory: 1n << 16n,
   manageRoles: 1n << 28n,
+  createPublicThreads: 1n << 35n,
+  sendMessagesInThreads: 1n << 38n,
 } as const;
 
 export type DiscordRolePermission = {

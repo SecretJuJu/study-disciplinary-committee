@@ -41,24 +41,9 @@ describe('command manifest', () => {
     ]);
   });
 
-  it('declares bounded required and optional study inputs', () => {
+  it('declares the thread-based review command without options', () => {
     const study = commands.find((command) => command.name === '심사');
-    expect(study?.options).toEqual([
-      expect.objectContaining({
-        type: 3,
-        name: '학습내용',
-        required: true,
-        min_length: 1,
-        max_length: 1_500,
-      }),
-      expect.objectContaining({
-        type: 4,
-        name: '학습시간',
-        min_value: 1,
-        max_value: 1_440,
-      }),
-      expect.objectContaining({ type: 3, name: '배운점', max_length: 1_000 }),
-    ]);
+    expect(study?.options).toBeUndefined();
   });
 });
 
@@ -68,7 +53,9 @@ describe('command help', () => {
     expect(commandHelp).toContain('`/help`');
     expect(commandHelp).toContain('`/설정 보기`');
     expect(commandHelp).toContain('`/설정 저장 <제출채널:#채널> <판결채널:#채널>`');
-    expect(commandHelp).toContain('`/심사 <학습내용:텍스트> [학습시간:숫자] [배운점:텍스트]`');
+    expect(commandHelp).toContain('`/심사`');
+    expect(commandHelp).toContain('공개 스레드에 학습 내용을 메시지로 작성');
+    expect(commandHelp).toContain('`⚖️ 심사 요청` 버튼');
     expect(commandHelp).toContain('`/내기록`');
     expect(commandHelp).not.toContain('/운영상태');
   });

@@ -6,7 +6,7 @@ goals:
   - 심사만 SQS와 OpenAI worker로 비동기 처리한다.
   - master GitHub Actions 배포와 Discord smoke check를 통과한다.
 execution_started: true
-current_task: 6
+current_task: null
 created_at: 2026-08-25T00:25:00+09:00
 ---
 
@@ -103,20 +103,44 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ### Task 6: OpenAI 크레딧 소진 오류 처리
 
-**Status:** in_progress
+**Status:** completed
 
 #### Subtasks
 
-- [ ] **6.1** OpenAI `credit_balance_exhausted`를 비재시도 오류로 안전하게 분류한다.
-- [ ] **6.2** Discord 원본 응답의 무기한 deferred 상태를 명확한 안내로 종료한다.
-- [ ] **6.3** debug 진단 코드·테스트·운영 문서를 보정하고 production에 배포한다.
+- [x] **6.1** OpenAI `credit_balance_exhausted`를 비재시도 오류로 안전하게 분류한다.
+- [x] **6.2** Discord 원본 응답의 무기한 deferred 상태를 명확한 안내로 종료한다.
+- [x] **6.3** debug 진단 코드·테스트·운영 문서를 보정하고 production에 배포한다.
 
 #### Acceptance Criteria
 
-- [ ] 크레딧 소진 시 `ai_credit_exhausted` 운영 알림이 기록된다.
-- [ ] 사용자의 `/심사` 응답은 “생각 중”에 남지 않고 충전 후 재시도 안내로 바뀐다.
-- [ ] 해당 SQS 메시지는 불필요하게 재시도하거나 DLQ로 이동하지 않는다.
-- [ ] `pnpm build && pnpm check`, CI와 Deploy가 성공한다.
+- [x] 크레딧 소진 시 `ai_credit_exhausted` 운영 알림이 기록된다.
+- [x] 사용자의 `/심사` 응답은 “생각 중”에 남지 않고 충전 후 재시도 안내로 바뀐다.
+- [x] 해당 SQS 메시지는 불필요하게 재시도하거나 DLQ로 이동하지 않는다.
+- [x] `pnpm build && pnpm check`, CI와 Deploy가 성공한다.
+
+### Task 7: 스레드 기반 심사 UI 구현
+
+**Status:** completed
+
+#### Subtasks
+
+- [x] **7.1** 옵션 없는 `/심사`와 스레드·버튼 사용법을 manifest, parser, `/help`에 반영한다.
+- [x] **7.2** draft 심사 회차의 조건부 저장·claim·reopen·완료 상태 전이를 구현한다.
+- [x] **7.3** prepare/button/judge-thread 작업과 Discord REST 어댑터를 기존 SQS Judge Lambda에 연결한다.
+- [x] **7.4** 스레드 메시지 필터·6,000자 snapshot·중복 방지·안전 실패 처리를 구현한다.
+- [x] **7.5** 최소 Discord 권한·Message Content Intent·새 사용 흐름을 검사 스크립트와 운영 문서에 반영한다.
+- [x] **7.6** 성공·실패·경계 테스트와 전체 build/check를 통과시킨다.
+
+#### Acceptance Criteria
+
+- [x] `/심사`는 설정된 제출 채널에서 공개 안내와 public thread를 준비하고, 소유자만 `⚖️ 심사 요청` 버튼으로 심사를 시작할 수 있다.
+- [x] 심사는 최대 5페이지·500개까지만 조회하고, 그중 소유자의 최신 일반 텍스트 최대 100개를 오래된 순으로 정렬해 6,000자까지 현재 snapshot에 포함한다.
+- [x] 빈 제출은 AI 없이 draft를 다시 열고, 중복 전달은 AI·통계 반영을 중복 실행하지 않는다.
+- [x] 접수 뒤 guild 설정이 바뀐 회차는 `cancelled`로 닫고, 재전달 시 같은 취소 안내를 deterministic하게 stable anchor에 복구한다.
+- [x] public thread 생성의 HTTP 403은 비재시도 권한 안내로 종료하고, HTTP 400/404는 생성 경쟁 여부를 다시 확인한 뒤 재시도한다.
+- [x] 판결과 안전 실패 안내는 만료 가능한 interaction webhook이 아닌 고정 anchor 메시지를 bot REST로 갱신한다.
+- [x] interaction Lambda는 secret-free를 유지하고, 기존 SQS/Judge Lambda만 사용하며 필요한 IAM만 최소 추가한다.
+- [x] 관련 코드·스크립트·문서·테스트가 새 흐름과 일치하고 `pnpm build && pnpm check`가 통과한다.
 
 ## Final Checklist
 
@@ -128,6 +152,9 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ## Execution Notes
 
+- 2026-08-25 11:40 KST: 최종 pre-commit review 보정을 기록했다. 접수 뒤 guild 설정이 변경되면 회차를 `cancelled`로 조건부 전이하고, anchor 수정이 일시 실패해 SQS가 재전달되어도 저장 상태에서 동일한 취소 안내를 deterministic하게 복구한다. Discord public thread 생성은 권한 부족 HTTP 403만 비재시도 setup 결과로 바꿔 명시적인 권한 안내를 게시하며, HTTP 400/404는 이미 thread가 만들어진 race인지 GET으로 재확인한 뒤 없으면 원래 오류를 유지해 재시도한다. 보정 관련 narrow 테스트 47개가 통과한 뒤 Root가 `pnpm build && pnpm check`를 재실행해 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. 추가 안전 검사도 `credential_pattern_hits=0`, `tracked_env_files=0`, `interaction_secret_markers=0`, cached diff check 통과로 확인했다. 이 기록 단계에서는 코드·stage·commit·push·deploy를 수행하지 않았다.
+- 2026-08-25 11:14 KST: Task 7 완료. `/심사`를 옵션 없는 공개 접수로 바꾸고 prepare(1초 지연)와 judge-thread discriminated SQS job을 기존 Judge Lambda에 연결했다. signed component는 guild·owner·anchor·thread/channel·configVersion·deadline을 검증하고 `draft → queued`를 조건부 claim한다. worker는 8분 lease로 중복 AI를 억제한다. Discord timestamp는 UTC `Z`와 유효한 offset을 허용한다. thread는 최대 5페이지·500개까지만 bounded pagination으로 조회하고, 버튼 시각 이전 소유자의 최신 type 0 non-bot 텍스트 최대 100개를 오래된 순으로 정렬해 Unicode 6,000자로 snapshot한다. 재시도 release는 `claimedAt`을 보존하고 실제 reopen만 제거해 버튼 시각 경계를 유지한다. 빈 제출/크레딧 소진은 draft와 버튼을 복구하고, 판결·안전 실패는 bot REST로 stable anchor를 수정한다. 판결·통계·session finalized는 단일 transaction이다. Discord 점검에 Read Message History/Create Public Threads/Send Messages in Threads와 Message Content Intent를 추가했고 IAM은 두 함수의 DynamoDB UpdateItem만 확장했다. 현재 production은 debug 채널과 submission 채널이 동일하다는 전제로 권한 smoke check를 수행한다. 최초 검증 16개 파일 103개 테스트 이후 Root review 보정까지 포함한 최종 검증은 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. credential pattern, tracked env file, interaction secret marker는 각각 0건이고 cached diff check도 통과했다. 외부 Discord command 등록·AWS 배포·production 수동 QA는 이 Task 범위에서 수행하지 않았다.
+- 2026-08-25 10:47 KST: Task 6 기존 구현을 재검증했다. `credit_balance_exhausted`는 `NonRetryableModelError`와 `ai_credit_exhausted` 안전 진단으로 변환되고, Judge가 Discord 원본 응답을 충전 후 새 `/심사` 안내로 수정한 뒤 정상 반환하므로 성공 경로에서는 SQS partial batch failure가 생성되지 않는다. 대상 테스트 4개 파일 29개와 `pnpm build && pnpm check`의 전체 15개 파일 81개 테스트가 통과했다. 커밋 `493c116`의 CI `32794297155`와 Deploy `32794297152`가 성공했고, 배포 단계의 check/build/Pulumi/Discord 등록·검증도 모두 성공했다. AWS에서 Judge Lambda Node 24/Active/업데이트 성공, event source Enabled·batch size 1·partial batch response, judge queue 0건을 확인했다. DLQ에는 수정 전 실패로 보이는 기존 3건이 남아 있으며 이번 검증에서는 삭제하거나 본문을 조회하지 않았다.
 - 2026-08-25 09:10 KST: session `1541599553558544454` 실패를 안전하게 재현했다. Luna 모델 조회는 HTTP 200이지만 Responses 생성은 HTTP 429, `credit_balance_exhausted`/`insufficient_quota`로 거절되어 요청 형식이 아니라 OpenAI 조직 크레딧 0이 원인이다. 비밀값과 제출 원문은 출력하지 않았다.
 - 2026-08-25 09:14 KST: 충전 뒤 session `1541600541266944041`은 제출만 저장되고 판결 전 `processing_failed`가 발생했다. 동일 저장 제출의 Luna/high/Structured Output 재현은 완료·검증 성공했다. high reasoning과 JSON이 공유하는 출력 상한의 간헐적 소진을 줄이도록 700→2,000으로 조정하고 AI 출력·Discord 후속응답 실패 코드를 분리한다.
 - 2026-08-25 09:22 KST: 새 코드 재시도도 Lambda timeout/throttle 없이 4.8초 만에 `processing_failed`로 끝났다. 동일 최신 제출의 OpenAI 출력은 별도 재현에서 완료·검증 성공했으므로 조회·OpenAI 요청·저장 단계를 안전 코드로 추가 분리한다. CloudWatch에는 safe structured diagnostic만 남긴다.

@@ -213,3 +213,117 @@
 
 - `dynamodb:TransactWriteItems` 허용만으로 transaction 내부 Put 권한이 충족되지 않는다. Judge 역할에는 transaction API 권한과 함께 내부 작업에 해당하는 `dynamodb:PutItem`이 필요하며, `dynamodb:EnclosingOperation = TransactWriteItems` 조건으로 독립 Put을 차단할 수 있다.
 - IAM simulator에서 `TransactWriteItems`만 단독 확인하면 이 누락을 놓칠 수 있다. transaction을 사용하는 역할은 API 작업과 내부 item 작업 권한을 함께 검증한다.
+
+[2026-08-25 10:47] - OpenAI 크레딧 소진 오류 처리 검증
+
+### DISCOVERED ISSUES
+
+- production judge queue는 비어 있지만 DLQ에는 수정 전 실패로 보이는 기존 메시지 3건이 남아 있다. 이번 검증은 파괴적 정리나 메시지 본문 조회를 수행하지 않았다.
+
+### DECISIONS
+
+- `credit_balance_exhausted`를 `NonRetryableModelError`로 변환하고, 안전 진단 게시 후 Discord 원본 응답을 충전·재실행 안내로 수정해 정상 반환하는 현재 경로를 Task 6의 비재시도 기준으로 확정했다.
+- 실제 크레딧 오류를 유료 API로 다시 유발하지 않고 경계·worker 단위 테스트, 성공한 배포 SHA, 읽기 전용 AWS 상태로 검증했다.
+
+### FAILED APPROACHES
+
+- 없음.
+
+### LEARNINGS
+
+- worker가 비재시도 오류를 처리하고 정상 반환하면 SQS handler는 해당 record를 `batchItemFailures`에 넣지 않으므로 같은 메시지를 재시도하거나 DLQ로 보내지 않는다.
+- 커밋 `493c116`의 CI `32794297155`와 Deploy `32794297152`가 성공했으며, Judge Lambda는 Node.js 24·Active·업데이트 성공, event source는 Enabled·batch size 1·`ReportBatchItemFailures` 상태다.
+
+### NEXT TASK TIPS
+
+- DLQ 기존 3건을 정리하려면 먼저 보존·삭제 정책을 사용자와 합의한다. Task 6 검증 증거로는 대상 4개 파일 29개 테스트와 전체 15개 파일 81개 테스트가 통과했다.
+
+[2026-08-25 11:14] - 스레드 기반 심사 UI 구현
+
+### DISCOVERED ISSUES
+
+- type 5 deferred 원본을 나중에 webhook으로 수정하는 기존 흐름은 입력 UI가 불편하고 interaction token 수명에 결과 게시가 결합되어 있었다.
+- interaction callback 메시지는 HTTP 응답 뒤 생성되므로 prepare SQS worker가 원본 메시지보다 먼저 실행될 수 있다.
+- 버튼 뒤에 작성된 메시지를 worker 조회 시점 기준으로 모으면 사용자가 승인하지 않은 추가 내용이 snapshot에 섞일 수 있다.
+
+### DECISIONS
+
+- `/심사`는 설정 채널에서 즉시 공개 anchor를 반환하고 prepare job을 1초 지연한다. Judge Lambda가 public thread와 소유자 전용 버튼을 준비하며 새 상시 리소스는 추가하지 않는다.
+- 버튼 claim 시각을 DynamoDB에 저장하고 Discord thread를 최대 5페이지·500개까지만 조회한다. 그중 claim 시각 이전 소유자의 최신 type 0 non-bot 텍스트 최대 100개를 오래된 순으로 정렬해 Unicode 6,000자로 현재 snapshot한다.
+- component는 guild, owner, anchor message, parent/thread channel, configVersion, deadline을 모두 일치시킨 뒤 `draft → queued`를 조건부 claim한다.
+- worker는 `queued → judging` 8분 lease와 판결·통계·session 단일 transaction을 사용한다. 빈 제출과 크레딧 소진은 draft/button을 복구하고, 안정 메시지와 판결은 bot REST의 stable anchor edit만 사용한다.
+
+### FAILED APPROACHES
+
+- 최초 전체 check는 Prettier가 10개 변경 파일의 형식을 거부했다. 프로젝트 config를 명시한 formatting 후 재검증했다.
+- 두 번째 전체 check는 사용하지 않는 runtime 상수와 type-only import를 ESLint가 거부했다. literal type과 type import로 보정했다.
+- 세 번째 전체 check는 테스트 mock이 인자 없는 함수로 추론되어 typed request를 읽지 못했다. `ModelClient['create']` 시그니처로 mock 경계를 지정했다.
+
+### LEARNINGS
+
+- message에서 시작한 Discord public thread의 ID는 source message ID와 같으므로 GET channel 확인 후 POST thread 생성으로 prepare retry를 멱등 처리할 수 있다.
+- 필요한 Discord permission 정수는 기존 설치 값 `311385213952`와 일치하며 View/Send/Embed/Read History/Create Public Threads/Send in Threads/Use Commands를 포함한다.
+- `pnpm build && pnpm check`는 16개 파일 103개 테스트, format, ESLint, strict typecheck, bundle load까지 통과했다. interaction bundle에는 OpenAI key, bot token, Luna model marker가 없다.
+
+### NEXT TASK TIPS
+
+- 다음 배포에서는 Discord command 재등록으로 옵션 없는 `/심사` manifest를 동기화하고, Message Content Intent 및 thread 권한 smoke check가 통과해야 한다.
+- production 수동 QA는 `/심사` → thread 작성 → owner 버튼 → stable anchor 판결 → `/내기록` 1회 증가 순서로 수행한다. 외부 배포는 Task 7 executor 범위에서 수행하지 않았다.
+
+[2026-08-25 11:29] - Task 7 Root review 기록 정합화
+
+### DISCOVERED ISSUES
+
+- 최초 기록은 thread API 조회 자체를 최대 100개로 표현했지만 실제 보정 구현은 최대 5페이지·500개를 bounded pagination한 뒤 최신 소유자 메시지 최대 100개를 snapshot한다.
+- retry release와 실제 draft reopen을 같은 상태 정리로 취급하면 `claimedAt`이 사라져 SQS 재시도에서 버튼 이후 메시지가 포함될 수 있다.
+- Discord message timestamp는 UTC `Z`뿐 아니라 유효한 ISO 8601 offset을 반환할 수 있다.
+- 권한 점검 문서가 debug 채널과 submission 채널을 일반적으로 동일시했으나, 이는 현재 production 설정에만 해당하는 전제다.
+
+### DECISIONS
+
+- Discord timestamp 경계는 Zod datetime의 offset 허용으로 검증한다.
+- retry release는 `claimedAt`을 보존하고, 사용자가 다시 버튼을 누르는 draft reopen에서만 `claimedAt`을 제거한다.
+- thread 조회는 최대 5페이지·500개로 제한하고, 필터 이후 최신 소유자 일반 텍스트 최대 100개를 오래된 순으로 AI에 전달한다.
+- Discord setup 문서는 현재 production에서 debug와 submission이 같은 채널이므로 debug 채널 권한 smoke가 submission 권한도 검증한다는 전제를 명시한다.
+
+### FAILED APPROACHES
+
+- 없음. Root review의 코드·테스트·문서 보정 결과를 기록 파일에만 동기화했다.
+
+### LEARNINGS
+
+- API pagination 상한과 AI snapshot 메시지 상한은 별개다. 운영 기록에는 `5 pages/500 fetched → latest 100 owner messages → 6,000 characters` 순서를 구분해 적어야 한다.
+- 재시도 lease 해제는 사용자 의도의 시간 경계를 초기화하는 reopen과 동일한 전이가 아니다.
+
+### NEXT TASK TIPS
+
+- production에서 debug와 submission 채널을 분리하면 `check-discord-setup.ts`가 submission 채널을 별도로 조회·검증하도록 환경 계약을 확장해야 한다.
+- 다음 전체 검증·배포 보고에는 Root review 이후 실제 테스트 수와 CI/Deploy run을 기준으로 기록을 갱신한다.
+
+[2026-08-25 11:40] - Task 7 최종 pre-commit 보정 기록
+
+### DISCOVERED ISSUES
+
+- 버튼 claim 뒤 guild 설정이 바뀌면 기존 회차를 계속 심사할 수 없지만, 단순 retry 상태로 남기면 같은 비회복 오류가 SQS에서 반복된다.
+- 설정 변경 취소 안내의 anchor 수정이 일시 실패할 수 있으므로 저장 상태만으로 다음 delivery에서 같은 안내를 다시 만들 수 있어야 한다.
+- Discord thread 생성의 403은 권한 설정 전에는 회복되지 않지만, 400/404는 callback message/thread 생성 경쟁으로 발생할 수 있어 같은 비재시도 분류를 적용하면 안 된다.
+
+### DECISIONS
+
+- 설정 불일치 회차는 `cancelled`로 영구 전이하고, 이후 delivery는 저장된 cancelled 상태에서 동일한 anchor 안내를 deterministic하게 재게시한다.
+- thread 생성 HTTP 403만 비재시도 권한 부족으로 처리한다. HTTP 400/404는 source message ID의 thread 존재 여부를 GET으로 재확인하고, race로 이미 생성됐으면 재사용하며 없으면 오류를 유지해 SQS가 재시도한다.
+- 관련 narrow 테스트 47개 통과 뒤 Root의 `pnpm build && pnpm check`에서 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck가 모두 통과했다. 추가 검사는 `credential_pattern_hits=0`, `tracked_env_files=0`, `interaction_secret_markers=0`, cached diff check 통과다.
+
+### FAILED APPROACHES
+
+- 없음. 코드 review 보정 결과를 기록 파일에만 동기화했다.
+
+### LEARNINGS
+
+- 비회복 설정 불일치에는 retry 상태가 아니라 terminal 상태와 deterministic renderer가 필요하다.
+- 동일한 Discord 4xx라도 403 권한 오류와 400/404 생성 경쟁은 재시도 정책이 달라야 한다.
+
+### NEXT TASK TIPS
+
+- 최종 로컬 검증은 16개 파일 111개 테스트와 자격증명·환경파일·interaction secret marker 0건으로 확정했다. 다음 단계는 이 증거를 유지한 채 commit/push/deploy 결과를 별도로 기록하는 것이다.
+- 배포 smoke에서 403 권한 안내가 나오면 Developer Portal과 submission 채널의 Create Public Threads/Send Messages in Threads 권한을 먼저 확인한다.

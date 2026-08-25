@@ -12,7 +12,11 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import { z } from 'zod';
 
 import { SqsJudgeQueue } from './interaction-adapters.js';
-import { routeApplicationCommand, type InteractionDependencies } from './interaction-service.js';
+import {
+  routeApplicationCommand,
+  routeComponentInteraction,
+  type InteractionDependencies,
+} from './interaction-service.js';
 
 const runtimeEnvironmentSchema = z
   .object({
@@ -64,13 +68,18 @@ export function createInteractionHandler(
       if (interaction.type === 1) {
         return json(200, pongResponse);
       }
-      if (interaction.type !== 2) {
+      if (interaction.type !== 2 && interaction.type !== 3) {
         return json(400, ephemeralMessageResponse('지원하지 않는 요청입니다.'));
       }
 
       try {
         const dependencies = injectedDependencies ?? createRuntimeDependencies();
-        return json(200, await routeApplicationCommand(interaction, dependencies));
+        return json(
+          200,
+          interaction.type === 2
+            ? await routeApplicationCommand(interaction, dependencies)
+            : await routeComponentInteraction(interaction, dependencies),
+        );
       } catch {
         return json(
           200,

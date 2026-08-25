@@ -5,6 +5,7 @@ import {
   hasManageGuildPermission,
   parseApplicationCommand,
   parseInteraction,
+  parseReviewButton,
   verifyDiscordRequest,
 } from '../src/index.js';
 
@@ -16,6 +17,7 @@ const commandInteraction = (name: string, options?: readonly unknown[]) =>
       application_id: '1541457217830522940',
       token: 'token',
       guild_id: '1541458098101952522',
+      channel_id: '1541458116195917935',
       member: { user: { id: '1541458098101952523' }, permissions: '32' },
       data: {
         id: '1541457217830522942',
@@ -75,7 +77,7 @@ describe('Discord interaction verification', () => {
 });
 
 describe('application command parsing', () => {
-  it('parses settings and study inputs into a typed command', () => {
+  it('parses settings and all no-input commands', () => {
     expect(
       parseApplicationCommand(
         commandInteraction('설정', [
@@ -95,40 +97,19 @@ describe('application command parsing', () => {
       submissionChannelId: '1541458116195917935',
       verdictChannelId: '1541458116195917936',
     });
-
-    expect(
-      parseApplicationCommand(
-        commandInteraction('심사', [
-          { type: 3, name: '학습내용', value: '  비동기 큐를 공부했다.  ' },
-          { type: 4, name: '학습시간', value: 60 },
-          { type: 3, name: '배운점', value: '  중복 전달을 고려해야 한다.  ' },
-        ]),
-      ),
-    ).toEqual({
-      name: '심사',
-      studyContent: '비동기 큐를 공부했다.',
-      durationMinutes: 60,
-      learnedText: '중복 전달을 고려해야 한다.',
-    });
-  });
-
-  it('parses no-input commands and settings view', () => {
     expect(parseApplicationCommand(commandInteraction('help'))).toEqual({ name: 'help' });
+    expect(parseApplicationCommand(commandInteraction('심사'))).toEqual({ name: '심사' });
     expect(parseApplicationCommand(commandInteraction('내기록', []))).toEqual({ name: '내기록' });
     expect(
       parseApplicationCommand(commandInteraction('설정', [{ type: 1, name: '보기' }])),
     ).toEqual({ name: '설정', action: '보기' });
   });
 
-  it('rejects unknown, missing, duplicate, and incorrectly typed options', () => {
+  it('rejects unknown options, review options, and incorrectly typed settings', () => {
     expect(() => parseApplicationCommand(commandInteraction('삭제'))).toThrow();
-    expect(() => parseApplicationCommand(commandInteraction('심사'))).toThrow();
     expect(() =>
       parseApplicationCommand(
-        commandInteraction('심사', [
-          { type: 3, name: '학습내용', value: '공부함' },
-          { type: 3, name: '학습내용', value: '중복' },
-        ]),
+        commandInteraction('심사', [{ type: 3, name: '학습내용', value: '금지된 옵션' }]),
       ),
     ).toThrow();
     expect(() =>
@@ -146,35 +127,42 @@ describe('application command parsing', () => {
       ),
     ).toThrow();
   });
+});
 
-  it('enforces study input length and duration boundaries', () => {
+describe('review button parsing', () => {
+  const component = (data: object) =>
+    parseInteraction(
+      JSON.stringify({
+        type: 3,
+        id: '1541457217830522941',
+        application_id: '1541457217830522940',
+        token: 'token',
+        guild_id: '1541458098101952522',
+        channel_id: '1541458116195917935',
+        member: { user: { id: '1541458098101952523' } },
+        message: { id: '1541459000000000001' },
+        data,
+      }),
+    );
+
+  it('strictly binds a button custom id to its source message', () => {
     expect(
-      parseApplicationCommand(
-        commandInteraction('심사', [
-          { type: 3, name: '학습내용', value: '가'.repeat(1_500) },
-          { type: 4, name: '학습시간', value: 1_440 },
-          { type: 3, name: '배운점', value: '나'.repeat(1_000) },
-        ]),
+      parseReviewButton(
+        component({ component_type: 2, custom_id: 'review_submit:1541459000000000002' }),
       ),
     ).toEqual({
-      name: '심사',
-      studyContent: '가'.repeat(1_500),
-      durationMinutes: 1_440,
-      learnedText: '나'.repeat(1_000),
+      sessionId: '1541459000000000002',
+      messageId: '1541459000000000001',
     });
+  });
 
-    expect(() =>
-      parseApplicationCommand(
-        commandInteraction('심사', [{ type: 3, name: '학습내용', value: '가'.repeat(1_501) }]),
-      ),
-    ).toThrow();
-    expect(() =>
-      parseApplicationCommand(
-        commandInteraction('심사', [
-          { type: 3, name: '학습내용', value: '공부함' },
-          { type: 4, name: '학습시간', value: 0 },
-        ]),
-      ),
-    ).toThrow();
+  it('rejects wrong component types and unrelated or malformed controls', () => {
+    for (const data of [
+      { component_type: 3, custom_id: 'review_submit:1541459000000000002' },
+      { component_type: 2, custom_id: 'review_submit:short' },
+      { component_type: 2, custom_id: 'other:1541459000000000002' },
+    ]) {
+      expect(() => parseReviewButton(component(data))).toThrow();
+    }
   });
 });

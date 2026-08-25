@@ -1,24 +1,26 @@
 import {
   commandHelp,
-  deferredChannelMessageResponse,
   ephemeralMessageResponse,
   hasManageGuildPermission,
   parseApplicationCommand,
+  parseReviewButton,
+  publicMessageResponse,
+  updateMessageResponse,
   type DiscordInteraction,
 } from '@disciplinary-committee/discord';
 import {
   defaultDisciplinaryThresholds,
   defaultScorePolicy,
-  submissionInputSchema,
   type GuildSettings,
   type UserStats,
 } from '@disciplinary-committee/domain';
 import type {
-  CreateAdHocReviewInput,
+  CreateThreadReviewInput,
   SaveGuildSettingsInput,
+  ThreadReviewSession,
 } from '@disciplinary-committee/persistence';
 
-import type { JudgeJob } from './judge.js';
+import type { ThreadReviewJob } from './review-jobs.js';
 
 const submissionRetentionSeconds = 90 * 24 * 60 * 60;
 
@@ -26,11 +28,24 @@ export type InteractionRepository = {
   getGuildSettings(guildId: string): Promise<GuildSettings | undefined>;
   saveGuildSettings(input: SaveGuildSettingsInput): Promise<void>;
   getUserStats(guildId: string, userId: string): Promise<UserStats | undefined>;
-  createAdHocReview(input: CreateAdHocReviewInput): Promise<void>;
+  createThreadReview(input: CreateThreadReviewInput): Promise<'created' | 'existing'>;
+  getThreadReview(guildId: string, sessionId: string): Promise<ThreadReviewSession | undefined>;
+  claimThreadReview(input: {
+    guildId: string;
+    sessionId: string;
+    ownerId: string;
+    anchorMessageId: string;
+    now: string;
+  }): Promise<boolean>;
+  reopenThreadReview(input: {
+    guildId: string;
+    sessionId: string;
+    expectedState: 'queued' | 'judging';
+  }): Promise<void>;
 };
 
 export type JudgeQueue = {
-  enqueue(job: JudgeJob): Promise<void>;
+  enqueue(job: ThreadReviewJob): Promise<void>;
 };
 
 export type InteractionDependencies = {
@@ -40,7 +55,9 @@ export type InteractionDependencies = {
 };
 
 type InteractionResponse =
-  typeof deferredChannelMessageResponse | ReturnType<typeof ephemeralMessageResponse>;
+  | ReturnType<typeof ephemeralMessageResponse>
+  | ReturnType<typeof publicMessageResponse>
+  | ReturnType<typeof updateMessageResponse>;
 
 function guildContext(
   interaction: DiscordInteraction,
@@ -177,41 +194,101 @@ export async function routeApplicationCommand(
     );
   }
 
-  const submission = submissionInputSchema.parse({
-    whatStudied: command.studyContent,
-    ...(command.durationMinutes === undefined ? {} : { duration: `${command.durationMinutes}분` }),
-    ...(command.learnedText === undefined ? {} : { learned: command.learnedText }),
-  });
-  const stats =
-    (await dependencies.repository.getUserStats(context.guildId, context.userId)) ??
-    initialStats(context.userId);
+  const channelId = interaction.channel_id;
+  if (channelId === undefined || channelId !== settings.submissionChannelId) {
+    return ephemeralMessageResponse(
+      `심사는 설정된 제출 채널 <#${settings.submissionChannelId}>에서만 시작할 수 있습니다.`,
+    );
+  }
   const now = dependencies.now();
-  const submittedAt = now.toISOString();
   const deadlineAt = new Date(
     now.getTime() + settings.submissionWindowMinutes * 60 * 1_000,
   ).toISOString();
   const expiresAt = Math.floor(now.getTime() / 1_000) + submissionRetentionSeconds;
 
-  await dependencies.repository.createAdHocReview({
+  await dependencies.repository.createThreadReview({
     guildId: context.guildId,
     sessionId: interaction.id,
-    userId: context.userId,
-    content: JSON.stringify(submission),
-    submittedAt,
+    ownerId: context.userId,
+    channelId,
+    createdAt: now.toISOString(),
     deadlineAt,
     expiresAt,
     configVersion: settings.configVersion,
   });
   await dependencies.judgeQueue.enqueue({
+    kind: 'prepare_review',
     guildId: context.guildId,
     sessionId: interaction.id,
     userId: context.userId,
-    submission,
-    stats,
-    scorePolicy: settings.scorePolicy,
+    channelId,
     interactionToken: interaction.token,
     applicationId: interaction.application_id,
   });
 
-  return deferredChannelMessageResponse;
+  return publicMessageResponse(
+    `**학습 심사 접수 준비 중**\n<@${context.userId}> 님의 공개 스레드를 준비하고 있습니다. 잠시 후 이 메시지의 안내를 확인해주세요.`,
+  );
+}
+
+export async function routeComponentInteraction(
+  interaction: DiscordInteraction,
+  dependencies: InteractionDependencies,
+): Promise<InteractionResponse> {
+  const context = guildContext(interaction);
+  if (context === undefined) {
+    return ephemeralMessageResponse('이 버튼은 Discord 서버 안에서만 사용할 수 있습니다.');
+  }
+  const button = parseReviewButton(interaction);
+  const settings = await dependencies.repository.getGuildSettings(context.guildId);
+  const session = await dependencies.repository.getThreadReview(context.guildId, button.sessionId);
+  if (
+    settings === undefined ||
+    !settings.enabled ||
+    session === undefined ||
+    session.channelId !== settings.submissionChannelId ||
+    session.configVersion !== settings.configVersion ||
+    session.ownerId !== context.userId ||
+    session.anchorMessageId !== button.messageId ||
+    session.threadId === undefined ||
+    Date.parse(session.deadlineAt) < dependencies.now().getTime() ||
+    (interaction.channel_id !== session.channelId && interaction.channel_id !== session.threadId)
+  ) {
+    return ephemeralMessageResponse(
+      '이 심사 요청을 실행할 권한이 없거나 접수 정보가 일치하지 않습니다.',
+    );
+  }
+
+  const claimed = await dependencies.repository.claimThreadReview({
+    guildId: context.guildId,
+    sessionId: session.sessionId,
+    ownerId: context.userId,
+    anchorMessageId: button.messageId,
+    now: dependencies.now().toISOString(),
+  });
+  if (!claimed) {
+    return ephemeralMessageResponse('이미 심사를 요청했거나 현재 처리 중인 접수입니다.');
+  }
+
+  try {
+    await dependencies.judgeQueue.enqueue({
+      kind: 'judge_thread',
+      guildId: context.guildId,
+      sessionId: session.sessionId,
+      userId: context.userId,
+    });
+  } catch (error) {
+    try {
+      await dependencies.repository.reopenThreadReview({
+        guildId: context.guildId,
+        sessionId: session.sessionId,
+        expectedState: 'queued',
+      });
+    } catch {
+      // 원래 enqueue 오류를 유지해 상위 경계가 안전한 사용자 메시지로 변환한다.
+    }
+    throw error;
+  }
+
+  return updateMessageResponse('**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.');
 }

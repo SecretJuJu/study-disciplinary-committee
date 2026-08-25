@@ -18,6 +18,7 @@ const environmentSchema = z.object({
 const userSchema = z.object({ id: snowflakeSchema, username: z.string(), bot: z.boolean() });
 const applicationSchema = z.object({
   id: snowflakeSchema,
+  flags: z.number().int().nonnegative(),
   interactions_endpoint_url: z.string().url().nullable().optional(),
 });
 const guildSchema = z.object({ id: snowflakeSchema, name: z.string() });
@@ -102,6 +103,9 @@ const permissionChecks = [
   ['View Channel', discordPermission.viewChannel],
   ['Send Messages', discordPermission.sendMessages],
   ['Embed Links', discordPermission.embedLinks],
+  ['Read Message History', discordPermission.readMessageHistory],
+  ['Create Public Threads', discordPermission.createPublicThreads],
+  ['Send Messages in Threads', discordPermission.sendMessagesInThreads],
 ] as const;
 const missingPermissions = permissionChecks
   .filter(([, permission]) => !hasDiscordPermission(effectivePermissions, permission))
@@ -109,6 +113,11 @@ const missingPermissions = permissionChecks
 
 if (missingPermissions.length > 0) {
   throw new Error(`Debug channel is missing permissions: ${missingPermissions.join(', ')}.`);
+}
+
+const messageContentIntentFlags = (1 << 18) | (1 << 19);
+if ((application.flags & messageContentIntentFlags) === 0) {
+  throw new Error('Discord Message Content Intent is not enabled for the application.');
 }
 
 let testMessageId: string | undefined;
@@ -120,7 +129,7 @@ if (environment.DISCORD_SEND_TEST_MESSAGE === 'true') {
       embeds: [
         {
           title: '스터디-징계위원회',
-          description: 'Guild 설치와 debug 채널의 View/Send/Embed 권한이 정상입니다.',
+          description: 'Guild 설치와 스레드 생성·읽기·쓰기 권한이 정상입니다.',
           color: 0x57_f2_87,
         },
       ],
@@ -141,6 +150,7 @@ const statusLines = [
   `Permission Manage Roles: ${hasDiscordPermission(effectivePermissions, discordPermission.manageRoles) ? 'OK' : 'OPTIONAL/MISSING'}`,
   `Interaction endpoint: ${application.interactions_endpoint_url === null || application.interactions_endpoint_url === undefined ? 'NOT_CONFIGURED' : 'CONFIGURED'}`,
   `Guild commands: ${commands.length}`,
+  'Message Content Intent: ENABLED',
   `Test message: ${testMessageId === undefined ? 'SKIPPED' : `SENT (${testMessageId})`}`,
 ];
 process.stdout.write(`${statusLines.join('\n')}\n`);

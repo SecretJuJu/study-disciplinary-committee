@@ -31,7 +31,7 @@ updated_at: 2026-08-24T12:16:00Z
 - [x] 3. DynamoDB repository와 조건부/트랜잭션 쓰기, TTL·멱등성 처리를 구현한다. -> `packages/persistence/`
 - [x] 4. Discord 서명 검증, command/modal/button parsing, 응답 adapter를 구현하고 위조 요청 테스트를 작성한다. -> `packages/discord/`, `apps/bot-api/`
 - [x] 5. 최소 컨텍스트 builder, 고정 prompt, Structured Output parser, OpenAI usage 측정을 구현하고 fixture 평가를 작성한다. -> `packages/ai-judge/`
-- [x] 6. interaction Lambda와 judge/outbox Lambda를 구현해 deferred 응답과 큐 처리를 연결한다. -> `apps/bot-api/`
+- [x] 6. interaction Lambda와 judge/outbox Lambda를 구현해 즉시 Discord 응답과 큐 처리를 연결한다. -> `apps/bot-api/`
 - [x] 7. Scheduler 기반 소환·마감·주간 결산 worker와 중복 전달 테스트를 구현한다. -> `apps/bot-api/`
 - [x] 8. Pulumi dev/prod stack, 최소 IAM, secret references, API/SQS/DynamoDB/Scheduler/알람/Budget를 구현한다. -> `infra/`
 - [x] 9. Discord command manifest와 test-guild/global 등록 도구를 구현한다. -> `packages/discord/`, `scripts/`
@@ -78,6 +78,7 @@ updated_at: 2026-08-24T12:16:00Z
 - 2026-08-24: Discord 운영 디버깅 요구를 추가했다. `/help`, 관리자 전용 `/운영상태`·`/최근오류` manifest와 안전 진단 이벤트 기반 코드를 추가했다. 알림에는 민감 데이터·원시 오류를 넣지 않으며, 실제 Discord 채널 생성·명령 등록·배포는 수행하지 않는다.
 - 2026-08-24: 관리자 AWS CLI profile로 한 번 실행하는 bootstrap, `master` 전용 GitHub OIDC deploy role, private S3 Pulumi backend, GitHub Actions 변수·시크릿 설정, 자동 Pulumi/Discord 배포 workflow를 추가했다. 스크립트와 workflow는 작성·로컬 검증만 하며 AWS/GitHub/Discord 외부 변경은 실행하지 않았다.
 - 2026-08-25: AWS/GitHub bootstrap과 production 배포를 실행했다. GitHub OIDC의 불변 owner/repository ID subject, API Gateway 태그, Pulumi Lambda 상태 조회 권한을 최소 범위로 보완했고 Node.js 24 Lambda를 CommonJS로 번들링했다. Actions run `32743671582`에서 Pulumi 배포와 Discord endpoint·guild command 동기화가 성공했다.
+- 2026-08-25: `/심사`를 옵션 입력에서 public thread·소유자 버튼 흐름으로 바꿨다. 현재 thread snapshot만 최대 100개·6,000자로 제한하고 기존 SQS/Judge Lambda를 재사용한다. 외부 Discord 등록과 production 배포는 별도 배포 단계에서 검증한다.
 
 ## Completion Checklist
 

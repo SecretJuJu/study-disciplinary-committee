@@ -9,6 +9,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from 'aws-lambda
 import nacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { ThreadReviewSession } from '@disciplinary-committee/persistence';
 
 import type {
   InteractionDependencies,
@@ -61,11 +62,27 @@ const stats: UserStats = {
   bestSurvivalStreak: 2,
 };
 
+const threadSession: ThreadReviewSession = {
+  sessionId: interactionId,
+  guildId,
+  ownerId: userId,
+  channelId: submissionChannelId,
+  state: 'draft',
+  createdAt: fixedNow.toISOString(),
+  deadlineAt: '2026-08-25T00:30:00.000Z',
+  expiresAt: 1_795_392_000,
+  configVersion: 4,
+  anchorMessageId: interactionId,
+  threadId: interactionId,
+};
+
 function createDependencies(input?: {
   settings?: GuildSettings;
   stats?: UserStats;
   saveError?: Error;
   queueError?: Error;
+  session?: ThreadReviewSession;
+  claimed?: boolean;
 }): {
   dependencies: InteractionDependencies;
   repository: InteractionRepository;
@@ -79,7 +96,10 @@ function createDependencies(input?: {
       }
     }),
     getUserStats: vi.fn(async () => input?.stats),
-    createAdHocReview: vi.fn(async () => undefined),
+    createThreadReview: vi.fn(async () => 'created' as const),
+    getThreadReview: vi.fn(async () => input?.session),
+    claimThreadReview: vi.fn(async () => input?.claimed ?? true),
+    reopenThreadReview: vi.fn(async () => undefined),
   };
   const judgeQueue: JudgeQueue = {
     enqueue: vi.fn(async () => {
@@ -99,6 +119,7 @@ function commandInteraction(input: {
   name: string;
   options?: readonly unknown[];
   permissions?: string;
+  channelId?: string;
 }): object {
   return {
     type: 2,
@@ -106,6 +127,7 @@ function commandInteraction(input: {
     application_id: applicationId,
     token: 'interaction-token-for-test',
     guild_id: guildId,
+    channel_id: input.channelId ?? submissionChannelId,
     member: {
       user: { id: userId },
       ...(input.permissions === undefined ? {} : { permissions: input.permissions }),
@@ -116,6 +138,24 @@ function commandInteraction(input: {
       name: input.name,
       ...(input.options === undefined ? {} : { options: input.options }),
     },
+  };
+}
+
+function componentInteraction(input?: {
+  actorId?: string;
+  messageId?: string;
+  channelId?: string;
+}): object {
+  return {
+    type: 3,
+    id: '1541459000000000010',
+    application_id: applicationId,
+    token: 'component-token-for-test',
+    guild_id: guildId,
+    channel_id: input?.channelId ?? submissionChannelId,
+    member: { user: { id: input?.actorId ?? userId } },
+    message: { id: input?.messageId ?? interactionId },
+    data: { component_type: 2, custom_id: `review_submit:${interactionId}` },
   };
 }
 
@@ -366,61 +406,55 @@ describe('interaction Lambda', () => {
     expect(body.data.content).toContain('누적 징계 점수: 0점');
   });
 
-  it('persists and enqueues a review before returning a deferred response', async () => {
+  it('creates a draft and prepare job before returning an immediate public response', async () => {
     const { dependencies, repository, judgeQueue } = createDependencies({ settings, stats });
-    const response = await invoke(
-      dependencies,
-      commandInteraction({
-        name: '심사',
-        options: [
-          { type: 3, name: '학습내용', value: 'TypeScript 타입 경계를 정리했다.' },
-          { type: 4, name: '학습시간', value: 45 },
-          { type: 3, name: '배운점', value: '외부 입력은 경계에서 검증해야 한다.' },
-        ],
-      }),
-    );
-    const submission = {
-      whatStudied: 'TypeScript 타입 경계를 정리했다.',
-      duration: '45분',
-      learned: '외부 입력은 경계에서 검증해야 한다.',
-    };
+    const response = await invoke(dependencies, commandInteraction({ name: '심사' }));
 
-    expect(repository.createAdHocReview).toHaveBeenCalledWith({
+    expect(repository.createThreadReview).toHaveBeenCalledWith({
       guildId,
       sessionId: interactionId,
-      userId,
-      content: JSON.stringify(submission),
-      submittedAt: '2026-08-25T00:00:00.000Z',
+      ownerId: userId,
+      channelId: submissionChannelId,
+      createdAt: '2026-08-25T00:00:00.000Z',
       deadlineAt: '2026-08-25T00:30:00.000Z',
       expiresAt: 1_795_392_000,
       configVersion: 4,
     });
     expect(judgeQueue.enqueue).toHaveBeenCalledWith({
+      kind: 'prepare_review',
       guildId,
       sessionId: interactionId,
       userId,
-      submission,
-      stats,
-      scorePolicy: settings.scorePolicy,
+      channelId: submissionChannelId,
       interactionToken: 'interaction-token-for-test',
       applicationId,
     });
-    expect(JSON.parse(response.body ?? '')).toEqual({ type: 5 });
-    expect(vi.mocked(repository.createAdHocReview).mock.invocationCallOrder[0]).toBeLessThan(
+    expect(JSON.parse(response.body ?? '')).toMatchObject({
+      type: 4,
+      data: { content: expect.any(String) },
+    });
+    expect(JSON.parse(response.body ?? '').data.flags).toBeUndefined();
+    expect(vi.mocked(repository.createThreadReview).mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(judgeQueue.enqueue).mock.invocationCallOrder[0] ?? 0,
     );
+  });
+
+  it('rejects review creation outside the configured submission channel', async () => {
+    const { dependencies, repository, judgeQueue } = createDependencies({ settings });
+    const response = await invoke(
+      dependencies,
+      commandInteraction({ name: '심사', channelId: verdictChannelId }),
+    );
+
+    expect(JSON.parse(response.body ?? '')).toMatchObject({ type: 4, data: { flags: 64 } });
+    expect(repository.createThreadReview).not.toHaveBeenCalled();
+    expect(judgeQueue.enqueue).not.toHaveBeenCalled();
   });
 
   it('returns an immediate safe error instead of deferring when queue enqueue fails', async () => {
     const queueError = new Error('sensitive upstream queue detail');
     const { dependencies, judgeQueue } = createDependencies({ settings, stats, queueError });
-    const response = await invoke(
-      dependencies,
-      commandInteraction({
-        name: '심사',
-        options: [{ type: 3, name: '학습내용', value: '테스트를 작성했다.' }],
-      }),
-    );
+    const response = await invoke(dependencies, commandInteraction({ name: '심사' }));
     const body = messageResponseSchema.parse(JSON.parse(response.body ?? ''));
 
     expect(judgeQueue.enqueue).toHaveBeenCalledOnce();
@@ -429,18 +463,68 @@ describe('interaction Lambda', () => {
     expect(body.data.content).toContain('요청을 처리하지 못했습니다.');
   });
 
-  it('returns an immediate ephemeral error for invalid command input', async () => {
-    const { dependencies, repository } = createDependencies({ settings });
-    const response = await invoke(
-      dependencies,
-      commandInteraction({
-        name: '심사',
-        options: [{ type: 3, name: '학습내용', value: '' }],
-      }),
-    );
+  it('claims an owner-bound button once and enqueues only the thread judge job', async () => {
+    const { dependencies, repository, judgeQueue } = createDependencies({
+      settings,
+      session: threadSession,
+    });
+    const response = await invoke(dependencies, componentInteraction());
 
-    expect(response.statusCode).toBe(200);
+    expect(repository.claimThreadReview).toHaveBeenCalledWith({
+      guildId,
+      sessionId: interactionId,
+      ownerId: userId,
+      anchorMessageId: interactionId,
+      now: fixedNow.toISOString(),
+    });
+    expect(judgeQueue.enqueue).toHaveBeenCalledWith({
+      kind: 'judge_thread',
+      guildId,
+      sessionId: interactionId,
+      userId,
+    });
+    expect(JSON.parse(response.body ?? '')).toEqual({
+      type: 7,
+      data: {
+        content: '**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.',
+        components: [],
+      },
+    });
+  });
+
+  it('fails closed for another user and duplicate claims without enqueuing AI work', async () => {
+    const otherUserId = '1541459000000000099';
+    const denied = createDependencies({ settings, session: threadSession });
+    const deniedResponse = await invoke(
+      denied.dependencies,
+      componentInteraction({ actorId: otherUserId }),
+    );
+    expect(JSON.parse(deniedResponse.body ?? '')).toMatchObject({ type: 4, data: { flags: 64 } });
+    expect(denied.judgeQueue.enqueue).not.toHaveBeenCalled();
+
+    const duplicate = createDependencies({ settings, session: threadSession, claimed: false });
+    const duplicateResponse = await invoke(duplicate.dependencies, componentInteraction());
+    expect(JSON.parse(duplicateResponse.body ?? '')).toMatchObject({
+      type: 4,
+      data: { flags: 64 },
+    });
+    expect(duplicate.judgeQueue.enqueue).not.toHaveBeenCalled();
+  });
+
+  it('reopens the conditional claim when button job enqueue fails', async () => {
+    const queueError = new Error('sensitive queue detail');
+    const { dependencies, repository } = createDependencies({
+      settings,
+      session: threadSession,
+      queueError,
+    });
+    const response = await invoke(dependencies, componentInteraction());
+
+    expect(repository.reopenThreadReview).toHaveBeenCalledWith({
+      guildId,
+      sessionId: interactionId,
+      expectedState: 'queued',
+    });
     expect(JSON.parse(response.body ?? '')).toMatchObject({ type: 4, data: { flags: 64 } });
-    expect(repository.createAdHocReview).not.toHaveBeenCalled();
   });
 });

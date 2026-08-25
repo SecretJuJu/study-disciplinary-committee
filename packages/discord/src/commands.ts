@@ -1,6 +1,5 @@
 const applicationCommandType = 1 as const;
 const subcommandOptionType = 1 as const;
-const stringOptionType = 3 as const;
 const integerOptionType = 4 as const;
 const channelOptionType = 7 as const;
 const guildInstallType = 0 as const;
@@ -14,7 +13,7 @@ type CommandOptionBase = {
 };
 
 export type StringCommandOption = CommandOptionBase & {
-  type: typeof stringOptionType;
+  type: 3;
   required?: boolean;
   min_length?: number;
   max_length?: number;
@@ -97,33 +96,9 @@ export const commands: readonly ApplicationCommand[] = [
   {
     type: applicationCommandType,
     name: '심사',
-    description: '현재 학습 내용을 제출해 AI 심사를 요청합니다.',
+    description: '공개 스레드에 학습 내용을 작성해 심사를 요청합니다.',
     integration_types: [guildInstallType],
     contexts: [guildContextType],
-    options: [
-      {
-        type: stringOptionType,
-        name: '학습내용',
-        description: '오늘 실제로 공부한 내용을 적습니다.',
-        required: true,
-        min_length: 1,
-        max_length: 1_500,
-      },
-      {
-        type: integerOptionType,
-        name: '학습시간',
-        description: '학습한 시간을 분 단위로 입력합니다.',
-        min_value: 1,
-        max_value: 1_440,
-      },
-      {
-        type: stringOptionType,
-        name: '배운점',
-        description: '학습 후 새롭게 알게 된 점을 적습니다.',
-        min_length: 1,
-        max_length: 1_000,
-      },
-    ],
   },
   {
     type: applicationCommandType,
@@ -171,9 +146,17 @@ export function createCommandHelp(manifest: readonly ApplicationCommand[] = comm
     return [`\`${renderUsage(command)}\` — ${command.description}${adminLabel}`];
   });
 
-  return ['**스터디 징계위원회 사용법**', ...lines, '', '<필수>, [선택] 표시를 확인하세요.'].join(
-    '\n',
-  );
+  return [
+    '**스터디 징계위원회 사용법**',
+    ...lines,
+    '',
+    '**심사 순서**',
+    '1. 설정된 제출 채널에서 `/심사`를 실행합니다.',
+    '2. 생성된 공개 스레드에 학습 내용을 메시지로 작성합니다.',
+    '3. 안내 메시지의 `⚖️ 심사 요청` 버튼을 누릅니다.',
+    '',
+    '<필수>, [선택] 표시를 확인하세요.',
+  ].join('\n');
 }
 
 export const commandHelp = createCommandHelp();

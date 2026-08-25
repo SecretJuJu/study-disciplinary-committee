@@ -102,7 +102,12 @@ new aws.iam.RolePolicy(`${name}-runtime-policy`, {
       Statement: [
         {
           Effect: 'Allow',
-          Action: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:TransactWriteItems'],
+          Action: [
+            'dynamodb:GetItem',
+            'dynamodb:PutItem',
+            'dynamodb:UpdateItem',
+            'dynamodb:TransactWriteItems',
+          ],
           Resource: tableArn,
         },
         {
@@ -124,7 +129,7 @@ const judgeRuntimePolicy = new aws.iam.RolePolicy(`${name}-judge-runtime-policy`
         Statement: [
           {
             Effect: 'Allow',
-            Action: ['dynamodb:GetItem', 'dynamodb:TransactWriteItems'],
+            Action: ['dynamodb:GetItem', 'dynamodb:UpdateItem', 'dynamodb:TransactWriteItems'],
             Resource: tableArn,
           },
           {

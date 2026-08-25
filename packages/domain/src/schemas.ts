@@ -88,7 +88,7 @@ export type GuildSettings = z.infer<typeof guildSettingsSchema>;
 
 export const submissionInputSchema = z
   .object({
-    whatStudied: z.string().trim().min(1).max(2_000),
+    whatStudied: z.string().trim().min(1).max(6_000),
     duration: z.string().trim().min(1).max(100).optional(),
     learned: z.string().trim().min(1).max(1_000).optional(),
   })

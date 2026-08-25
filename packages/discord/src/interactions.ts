@@ -11,6 +11,7 @@ const interactionSchema = z.object({
   application_id: snowflakeSchema,
   token: z.string().min(1).max(256),
   guild_id: snowflakeSchema.optional(),
+  channel_id: snowflakeSchema.optional(),
   member: z
     .object({
       user: z.object({ id: snowflakeSchema }).passthrough(),
@@ -24,7 +25,15 @@ const interactionSchema = z.object({
       type: z.number().int().optional(),
       name: z.string().min(1).max(32).optional(),
       custom_id: z.string().max(100).optional(),
+      component_type: z.number().int().optional(),
       options: z.array(z.unknown()).max(25).optional(),
+    })
+    .passthrough()
+    .optional(),
+  message: z
+    .object({
+      id: snowflakeSchema,
+      channel_id: snowflakeSchema.optional(),
     })
     .passthrough()
     .optional(),
@@ -74,30 +83,6 @@ const settingsSaveOptionSchema = z
   })
   .strict();
 
-const studyValueOptionSchema = z.discriminatedUnion('name', [
-  z
-    .object({
-      type: z.literal(3),
-      name: z.literal('학습내용'),
-      value: z.string().trim().min(1).max(1_500),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal(4),
-      name: z.literal('학습시간'),
-      value: z.number().int().min(1).max(1_440),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal(3),
-      name: z.literal('배운점'),
-      value: z.string().trim().min(1).max(1_000),
-    })
-    .strict(),
-]);
-
 export type ParsedApplicationCommand =
   | { name: 'help' }
   | { name: '설정'; action: '보기' }
@@ -107,13 +92,13 @@ export type ParsedApplicationCommand =
       submissionChannelId: string;
       verdictChannelId: string;
     }
-  | {
-      name: '심사';
-      studyContent: string;
-      durationMinutes?: number;
-      learnedText?: string;
-    }
+  | { name: '심사' }
   | { name: '내기록' };
+
+export type ParsedReviewButton = {
+  sessionId: string;
+  messageId: string;
+};
 
 function assertUniqueOptionNames(options: readonly { name: string }[]): void {
   const names = options.map((option) => option.name);
@@ -150,31 +135,6 @@ function parseSettingsCommand(options: readonly unknown[]): ParsedApplicationCom
   };
 }
 
-function parseStudyCommand(options: readonly unknown[]): ParsedApplicationCommand {
-  const parsedOptions = z.array(studyValueOptionSchema).min(1).max(3).parse(options);
-  assertUniqueOptionNames(parsedOptions);
-
-  let studyContent: string | undefined;
-  let durationMinutes: number | undefined;
-  let learnedText: string | undefined;
-  for (const option of parsedOptions) {
-    if (option.name === '학습내용') {
-      studyContent = option.value;
-    } else if (option.name === '학습시간') {
-      durationMinutes = option.value;
-    } else {
-      learnedText = option.value;
-    }
-  }
-
-  return {
-    name: '심사',
-    studyContent: z.string().min(1).max(1_500).parse(studyContent),
-    ...(durationMinutes === undefined ? {} : { durationMinutes }),
-    ...(learnedText === undefined ? {} : { learnedText }),
-  };
-}
-
 export function parseApplicationCommand(interaction: DiscordInteraction): ParsedApplicationCommand {
   if (interaction.type !== 2) {
     throw new Error('Interaction is not an application command.');
@@ -191,7 +151,8 @@ export function parseApplicationCommand(interaction: DiscordInteraction): Parsed
     return parseSettingsCommand(options);
   }
   if (data.name === '심사') {
-    return parseStudyCommand(options);
+    emptyOptionsSchema.parse(options);
+    return { name: '심사' };
   }
   if (data.name === '내기록') {
     emptyOptionsSchema.parse(options);
@@ -199,6 +160,25 @@ export function parseApplicationCommand(interaction: DiscordInteraction): Parsed
   }
 
   throw new Error('Unsupported application command.');
+}
+
+const reviewButtonDataSchema = z
+  .object({
+    component_type: z.literal(2),
+    custom_id: z.string().regex(/^review_submit:\d{17,20}$/),
+  })
+  .strict();
+
+export function parseReviewButton(interaction: DiscordInteraction): ParsedReviewButton {
+  if (interaction.type !== 3) {
+    throw new Error('Interaction is not a message component.');
+  }
+  const data = reviewButtonDataSchema.parse(interaction.data);
+  const message = z.object({ id: snowflakeSchema }).passthrough().parse(interaction.message);
+  return {
+    sessionId: data.custom_id.slice('review_submit:'.length),
+    messageId: message.id,
+  };
 }
 
 export function verifyDiscordRequest(input: {
@@ -254,4 +234,9 @@ export const deferredChannelMessageResponse = { type: 5 } as const;
 export const ephemeralMessageResponse = (content: string) => ({
   type: 4,
   data: { content, flags: 1 << 6 },
+});
+export const publicMessageResponse = (content: string) => ({ type: 4, data: { content } });
+export const updateMessageResponse = (content: string) => ({
+  type: 7,
+  data: { content, components: [] as const },
 });

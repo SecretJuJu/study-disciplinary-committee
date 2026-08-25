@@ -1,4 +1,5 @@
 import { GetCommand, PutCommand, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
+import type { UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   defaultDisciplinaryThresholds,
@@ -52,12 +53,16 @@ function repositoryWith(
   input: {
     response?: unknown;
     error?: Error;
+    send?: (command: unknown) => Promise<unknown>;
   } = {},
 ): { repository: DynamoReviewRepository; commands: unknown[] } {
   const commands: unknown[] = [];
   const client = {
     send: async (command: unknown): Promise<unknown> => {
       commands.push(command);
+      if (input.send !== undefined) {
+        return input.send(command);
+      }
       if (input.error !== undefined) {
         throw input.error;
       }
@@ -321,5 +326,227 @@ describe('DynamoReviewRepository stats and ad-hoc review', () => {
         finalizedAt: '2026-08-24T16:01:00.000Z',
       }),
     ).rejects.toBe(transactionError);
+  });
+});
+
+describe('DynamoReviewRepository thread review state machine', () => {
+  const sessionId = '1541459000000000000';
+  const createdAt = '2026-08-25T00:00:00.000Z';
+  const deadlineAt = '2026-08-25T00:30:00.000Z';
+  const expiresAt = 1_795_392_000;
+
+  it('creates a draft session idempotency boundary without a submission body', async () => {
+    const { repository, commands } = repositoryWith();
+
+    await expect(
+      repository.createThreadReview({
+        guildId,
+        sessionId,
+        ownerId: userId,
+        channelId: settings.submissionChannelId,
+        createdAt,
+        deadlineAt,
+        expiresAt,
+        configVersion: settings.configVersion,
+      }),
+    ).resolves.toBe('created');
+
+    expect(commands[0]).toBeInstanceOf(PutCommand);
+    expect((commands[0] as PutCommand).input).toMatchObject({
+      Item: {
+        PK: `GUILD#${guildId}`,
+        SK: `SESSION#${sessionId}`,
+        entityType: 'ThreadReviewSession',
+        state: 'draft',
+        ownerId: userId,
+      },
+      ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+    });
+  });
+
+  it('treats an exact existing interaction session as an idempotent create retry', async () => {
+    let callCount = 0;
+    const conflict = Object.assign(new Error('duplicate'), {
+      name: 'ConditionalCheckFailedException',
+    });
+    const { repository } = repositoryWith({
+      send: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw conflict;
+        }
+        return {
+          Item: {
+            PK: `GUILD#${guildId}`,
+            SK: `SESSION#${sessionId}`,
+            entityType: 'ThreadReviewSession',
+            sessionId,
+            guildId,
+            ownerId: userId,
+            channelId: settings.submissionChannelId,
+            state: 'draft',
+            createdAt,
+            deadlineAt,
+            expiresAt,
+            configVersion: settings.configVersion,
+          },
+        };
+      },
+    });
+
+    await expect(
+      repository.createThreadReview({
+        guildId,
+        sessionId,
+        ownerId: userId,
+        channelId: settings.submissionChannelId,
+        createdAt,
+        deadlineAt,
+        expiresAt,
+        configVersion: settings.configVersion,
+      }),
+    ).resolves.toBe('existing');
+  });
+
+  it('binds the stable anchor/thread and claims the button only before the deadline', async () => {
+    const { repository, commands } = repositoryWith();
+    await repository.bindThreadReview({
+      guildId,
+      sessionId,
+      ownerId: userId,
+      channelId: settings.submissionChannelId,
+      anchorMessageId: '1541459000000000008',
+      threadId: '1541459000000000009',
+    });
+    await expect(
+      repository.claimThreadReview({
+        guildId,
+        sessionId,
+        ownerId: userId,
+        anchorMessageId: '1541459000000000008',
+        now: createdAt,
+      }),
+    ).resolves.toBe(true);
+
+    const bind = (commands[0] as UpdateCommand).input;
+    const claim = (commands[1] as UpdateCommand).input;
+    expect(bind.ConditionExpression).toContain('anchorMessageId = :anchor');
+    expect(claim.ConditionExpression).toContain('deadlineAt >= :now');
+    expect(claim.ExpressionAttributeValues).toMatchObject({
+      ':draft': 'draft',
+      ':queued': 'queued',
+      ':now': createdAt,
+    });
+  });
+
+  it('returns false for a duplicate conditional button claim', async () => {
+    const conflict = Object.assign(new Error('duplicate'), {
+      name: 'ConditionalCheckFailedException',
+    });
+    const { repository } = repositoryWith({ error: conflict });
+
+    await expect(
+      repository.claimThreadReview({
+        guildId,
+        sessionId,
+        ownerId: userId,
+        anchorMessageId: '1541459000000000008',
+        now: createdAt,
+      }),
+    ).resolves.toBe(false);
+  });
+
+  it('claims a queued job with a retry lease and parses the strict returned record', async () => {
+    const { repository, commands } = repositoryWith({
+      response: {
+        Attributes: {
+          PK: `GUILD#${guildId}`,
+          SK: `SESSION#${sessionId}`,
+          entityType: 'ThreadReviewSession',
+          sessionId,
+          guildId,
+          ownerId: userId,
+          channelId: settings.submissionChannelId,
+          state: 'judging',
+          createdAt,
+          deadlineAt,
+          expiresAt,
+          configVersion: settings.configVersion,
+          anchorMessageId: '1541459000000000008',
+          threadId: '1541459000000000009',
+          leaseUntil: '2026-08-25T00:08:00.000Z',
+        },
+      },
+    });
+
+    await expect(
+      repository.claimThreadReviewForJudging({
+        guildId,
+        sessionId,
+        now: createdAt,
+        leaseUntil: '2026-08-25T00:08:00.000Z',
+      }),
+    ).resolves.toMatchObject({ state: 'judging', ownerId: userId });
+    expect((commands[0] as UpdateCommand).input.ConditionExpression).toContain('leaseUntil < :now');
+  });
+
+  it('preserves the button cutoff across retryable worker releases', async () => {
+    const { repository, commands } = repositoryWith();
+
+    await repository.releaseThreadReview({ guildId, sessionId });
+    await repository.reopenThreadReview({
+      guildId,
+      sessionId,
+      expectedState: 'queued',
+    });
+
+    expect((commands[0] as UpdateCommand).input.UpdateExpression).toBe(
+      'SET #state = :next REMOVE leaseUntil',
+    );
+    expect((commands[1] as UpdateCommand).input.UpdateExpression).toBe(
+      'SET #state = :next REMOVE leaseUntil, claimedAt',
+    );
+  });
+
+  it('marks settings-invalidated reviews as cancelled', async () => {
+    const { repository, commands } = repositoryWith();
+
+    await repository.cancelThreadReview({ guildId, sessionId });
+
+    expect((commands[0] as UpdateCommand).input).toMatchObject({
+      UpdateExpression: 'SET #state = :next REMOVE leaseUntil, claimedAt',
+      ConditionExpression: '#state = :expected',
+      ExpressionAttributeValues: {
+        ':expected': 'judging',
+        ':next': 'cancelled',
+      },
+    });
+  });
+
+  it('finalizes verdict, stats, and session state in one transaction', async () => {
+    const { repository, commands } = repositoryWith();
+
+    await repository.finalizeThreadJudgment({
+      guildId,
+      sessionId,
+      userId,
+      stats: initialStats,
+      scorePolicy: defaultScorePolicy,
+      finalizedAt: '2026-08-25T00:01:00.000Z',
+      judgment: {
+        outcome: 'meaningful',
+        rationale: '구체적인 학습 활동이 있습니다.',
+        verdictText: '유의미한 학습입니다.',
+        confidence: 'high',
+      },
+    });
+
+    const items = (commands[0] as TransactWriteCommand).input.TransactItems;
+    expect(items).toHaveLength(3);
+    expect(items?.[2]?.Update).toMatchObject({
+      Key: { PK: `GUILD#${guildId}`, SK: `SESSION#${sessionId}` },
+      ConditionExpression: '#state = :judging AND ownerId = :owner',
+      UpdateExpression: 'SET #state = :finalized REMOVE leaseUntil',
+    });
   });
 });

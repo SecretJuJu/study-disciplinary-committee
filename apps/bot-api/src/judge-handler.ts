@@ -1,14 +1,20 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { judgmentSchema, type Judgment } from '@disciplinary-committee/domain';
+import { judgmentSchema, type GuildSettings, type Judgment } from '@disciplinary-committee/domain';
 import { DynamoReviewRepository, sessionPk, verdictSk } from '@disciplinary-committee/persistence';
+import type {
+  FinalizeThreadJudgmentInput,
+  ThreadReviewSession,
+} from '@disciplinary-committee/persistence';
 import type { SQSBatchResponse } from 'aws-lambda';
 import { z } from 'zod';
 
 import { OpenAIResponsesClient, DiscordRestClient } from './adapters.js';
 import { DiscordDiagnosticReporter } from './diagnostics.js';
 import { JudgeWorker, type JudgeRepository } from './judge.js';
+import { threadReviewJobSchema } from './review-jobs.js';
+import { ThreadReviewWorker, type ThreadReviewRepository } from './thread-review.js';
 
 const runtimeEnvironmentSchema = z
   .object({
@@ -85,7 +91,7 @@ export function createCachedAppSecretsLoader(
   };
 }
 
-class DynamoJudgeRepository implements JudgeRepository {
+class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
   private readonly repository: DynamoReviewRepository;
 
   public constructor(
@@ -106,6 +112,51 @@ class DynamoJudgeRepository implements JudgeRepository {
     input: Parameters<JudgeRepository['finalizeJudgment']>[0],
   ): Promise<void> {
     return this.repository.finalizeJudgment(input);
+  }
+
+  public getGuildSettings(guildId: string): Promise<GuildSettings | undefined> {
+    return this.repository.getGuildSettings(guildId);
+  }
+
+  public getThreadReview(
+    guildId: string,
+    sessionId: string,
+  ): Promise<ThreadReviewSession | undefined> {
+    return this.repository.getThreadReview(guildId, sessionId);
+  }
+
+  public bindThreadReview(
+    input: Parameters<ThreadReviewRepository['bindThreadReview']>[0],
+  ): Promise<void> {
+    return this.repository.bindThreadReview(input);
+  }
+
+  public claimThreadReviewForJudging(
+    input: Parameters<ThreadReviewRepository['claimThreadReviewForJudging']>[0],
+  ): Promise<ThreadReviewSession | undefined> {
+    return this.repository.claimThreadReviewForJudging(input);
+  }
+
+  public reopenThreadReview(
+    input: Parameters<ThreadReviewRepository['reopenThreadReview']>[0],
+  ): Promise<void> {
+    return this.repository.reopenThreadReview(input);
+  }
+
+  public releaseThreadReview(
+    input: Parameters<ThreadReviewRepository['releaseThreadReview']>[0],
+  ): Promise<void> {
+    return this.repository.releaseThreadReview(input);
+  }
+
+  public cancelThreadReview(
+    input: Parameters<ThreadReviewRepository['cancelThreadReview']>[0],
+  ): Promise<void> {
+    return this.repository.cancelThreadReview(input);
+  }
+
+  public finalizeThreadJudgment(input: FinalizeThreadJudgmentInput): Promise<void> {
+    return this.repository.finalizeThreadJudgment(input);
   }
 
   public async getFinalizedJudgment(
@@ -131,7 +182,7 @@ class DynamoJudgeRepository implements JudgeRepository {
   }
 }
 
-export type JudgeProcessor = Pick<JudgeWorker, 'process'>;
+export type JudgeProcessor = { process(rawJob: unknown): Promise<void> };
 export type JudgeProcessorLoader = () => Promise<JudgeProcessor>;
 
 function parseMessageBody(body: string): unknown {
@@ -142,7 +193,7 @@ function parseMessageBody(body: string): unknown {
   }
 }
 
-async function createRuntimeWorker(): Promise<JudgeWorker> {
+async function createRuntimeWorker(): Promise<JudgeProcessor> {
   const environment = runtimeEnvironmentSchema.parse({
     TABLE_NAME: process.env.TABLE_NAME,
     APP_SECRET_ARN: process.env.APP_SECRET_ARN,
@@ -157,16 +208,23 @@ async function createRuntimeWorker(): Promise<JudgeWorker> {
   const documentClient = DynamoDBDocumentClient.from(new DynamoDBClient({}));
   const repository = new DynamoJudgeRepository(documentClient, environment.TABLE_NAME);
   const discord = new DiscordRestClient(secrets.DISCORD_BOT_TOKEN);
-  return new JudgeWorker(
-    new OpenAIResponsesClient(secrets.OPENAI_API_KEY),
-    repository,
-    discord,
-    new DiscordDiagnosticReporter(discord, environment.DISCORD_DEBUG_CHANNEL_ID),
-  );
+  const model = new OpenAIResponsesClient(secrets.OPENAI_API_KEY);
+  const diagnostics = new DiscordDiagnosticReporter(discord, environment.DISCORD_DEBUG_CHANNEL_ID);
+  const legacy = new JudgeWorker(model, repository, discord, diagnostics);
+  const threadReview = new ThreadReviewWorker(model, repository, discord, diagnostics);
+  return {
+    process: async (rawJob) => {
+      if (threadReviewJobSchema.safeParse(rawJob).success) {
+        await threadReview.process(rawJob);
+        return;
+      }
+      await legacy.process(rawJob);
+    },
+  };
 }
 
-let runtimeWorker: Promise<JudgeWorker> | undefined;
-function loadRuntimeWorker(): Promise<JudgeWorker> {
+let runtimeWorker: Promise<JudgeProcessor> | undefined;
+function loadRuntimeWorker(): Promise<JudgeProcessor> {
   if (runtimeWorker === undefined) {
     runtimeWorker = createRuntimeWorker().catch((error: unknown) => {
       runtimeWorker = undefined;

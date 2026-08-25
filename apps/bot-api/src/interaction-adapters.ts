@@ -17,6 +17,7 @@ export class SqsJudgeQueue implements JudgeQueue {
       new SendMessageCommand({
         QueueUrl: this.queueUrl,
         MessageBody: JSON.stringify(job),
+        ...(job.kind === 'prepare_review' ? { DelaySeconds: 1 } : {}),
       }),
     );
   }

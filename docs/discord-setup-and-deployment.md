@@ -8,11 +8,12 @@
 
 1. Guild Install을 활성화한다.
 2. Install scopes에서 `bot`, `applications.commands`를 선택한다.
-3. bot 권한은 `View Channel`, `Send Messages`, `Embed Links`, `Use Application Commands`를 선택한다.
-4. `Administrator`, 메시지 내용 읽기, 멤버 목록 읽기, 채널 관리, `Manage Roles`는 현재 범위에 필요 없다.
-5. General Information의 Application ID와 Public Key를 bootstrap 변수로 사용한다.
-6. Bot Token은 GitHub Actions secret과 Pulumi/Secrets Manager 경로로만 전달한다.
-7. bot과 관리자만 볼 수 있는 debug text channel을 만들고 ID를 `DISCORD_DEBUG_CHANNEL_ID`로 설정한다.
+3. bot 권한은 `View Channel`, `Send Messages`, `Embed Links`, `Read Message History`, `Create Public Threads`, `Send Messages in Threads`, `Use Application Commands`를 선택한다.
+4. Bot 페이지에서 **Message Content Intent**를 켠다. 소유자의 thread 텍스트 snapshot을 읽는 데 필요하다.
+5. `Administrator`, Presence Intent, Server Members Intent, 채널 관리, `Manage Roles`는 현재 범위에 필요 없다.
+6. General Information의 Application ID와 Public Key를 bootstrap 변수로 사용한다.
+7. Bot Token은 GitHub Actions secret과 Pulumi/Secrets Manager 경로로만 전달한다.
+8. bot과 관리자만 볼 수 있는 debug text channel을 만들고 ID를 `DISCORD_DEBUG_CHANNEL_ID`로 설정한다.
 
 Interactions Endpoint URL은 직접 붙여넣을 필요가 없다. `master` 배포 workflow가 Pulumi의 HTTPS output으로 갱신하고 Discord PING 검증을 통과시킨다.
 
@@ -24,16 +25,17 @@ Interactions Endpoint URL은 직접 붙여넣을 필요가 없다. `master` 배�
 /help
 /설정 보기
 /설정 저장 제출채널:#채널 판결채널:#채널
-/심사 학습내용:텍스트 [학습시간:분] [배운점:텍스트]
+/심사
 /내기록
 ```
 
-- `<필수>`에 해당하는 `학습내용`, `제출채널`, `판결채널`은 반드시 입력한다.
-- 대괄호 항목은 선택이다. `학습시간`은 분 단위 정수다.
+- `/심사`를 실행하면 bot이 공개 접수 메시지와 public thread를 만든다.
+- 생성된 thread에 학습 내용을 여러 메시지로 작성한 뒤 anchor의 `⚖️ 심사 요청` 버튼을 누른다.
+- 최근 thread 메시지를 최대 500개까지만 제한적으로 조회하고, 그중 소유자의 최신 일반 텍스트 최대 100개·6,000자만 심사한다. attachment, system/bot/다른 사용자 메시지는 무시한다.
 - `/설정 보기`와 `/설정 저장`은 서버 관리 권한이 있어야 한다.
 - `/설정 저장` 전에는 `/심사`를 실행할 수 없다.
 
-`/help`, `/설정`, `/내기록`은 OpenAI 없이 코드와 DynamoDB로 즉시 응답한다. `/심사`만 OpenAI를 사용한다. Discord에 표시되는 “생각 중”은 Lambda 스트리밍이 아니라 type 5 deferred acknowledgement다. SQS가 Judge Lambda를 호출하고, Judge가 판결을 받은 뒤 해당 interaction의 원본 응답을 수정한다.
+`/help`, `/설정`, `/내기록`은 OpenAI 없이 코드와 DynamoDB로 즉시 응답한다. `/심사`만 OpenAI를 사용한다. Lambda 스트리밍이나 무기한 “생각 중” 표시는 사용하지 않는다. prepare와 judge-thread 작업은 기존 SQS/Judge Lambda가 처리하고, 최종 판결은 bot REST로 고정 anchor 메시지를 수정한다.
 
 ## 3. 설정 저장 동작
 
@@ -74,7 +76,7 @@ DISCORD_SEND_TEST_MESSAGE=false pnpm check:discord
 
 필수 환경변수는 `DISCORD_APPLICATION_ID`, `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_DEBUG_CHANNEL_ID`다. 기본값은 테스트 메시지 전송이므로 읽기 점검만 하려면 반드시 `DISCORD_SEND_TEST_MESSAGE=false`를 사용한다.
 
-스크립트는 bot identity, guild membership, endpoint, debug channel 소유 guild, `View Channel`/`Send Messages`/`Embed Links`, 등록 command 수를 검사한다. Deploy workflow에서는 테스트 메시지 전송까지 허용한다. token과 원시 Discord 응답은 출력하지 않는다.
+스크립트는 bot identity, guild membership, endpoint, 설정된 debug 채널의 소유 guild, `View Channel`/`Send Messages`/`Embed Links`/`Read Message History`/`Create Public Threads`/`Send Messages in Threads`, Message Content Intent, 등록 command 수를 검사한다. 현재 production은 debug 채널과 제출 채널을 같은 채널로 사용한다. Deploy workflow에서는 테스트 메시지 전송까지 허용한다. token과 원시 Discord 응답은 출력하지 않는다.
 
 등록 명령 수는 반드시 `4`여야 한다. endpoint에 서명 없는 POST를 보내면 HTTP `401`이어야 한다.
 
@@ -84,9 +86,11 @@ Judge의 재시도 가능한 실패는 debug channel에 안전한 원인 코드�
 
 같은 안전 진단은 Judge Lambda의 CloudWatch Logs에 `event=operational_diagnostic` JSON으로도 기록된다. AWS CLI에서는 `aws logs tail /aws/lambda/<judge-function> --since 30m`으로 확인한다. 로그에도 제출 원문·token·secret·원시 오류는 포함하지 않는다.
 
-`ai_credit_exhausted`는 OpenAI 프로젝트 크레딧이 0일 때 발생하는 비재시도 오류다. 이 경우 bot은 원본 deferred 응답을 충전 후 `/심사` 재실행 안내로 바꾸고 SQS 처리를 종료한다. [OpenAI Billing](https://platform.openai.com/settings/organization/billing/)에서 크레딧을 추가해야 실제 심사가 다시 동작한다. 이미 실패한 제출은 자동 판결하지 않으므로 충전 후 새 `/심사`를 실행한다.
+`ai_credit_exhausted`는 OpenAI 프로젝트 크레딧이 0일 때 발생하는 비재시도 오류다. 이 경우 bot은 회차를 draft로 다시 열고 고정 anchor에 충전 안내와 `⚖️ 심사 요청` 버튼을 복구한다. [OpenAI Billing](https://platform.openai.com/settings/organization/billing/)에서 크레딧을 추가한 뒤 기존 thread에서 버튼을 다시 누르면 된다.
 
-그 외 AI 실패는 `ai_output_incomplete` 또는 `ai_output_invalid`, Discord 후속응답 실패는 `discord_service_unavailable` 또는 `discord_request_rejected`로 구분한다. 앞의 두 오류는 SQS가 다시 심사하며, Discord 오류는 이미 저장된 판결을 재사용해 후속응답만 다시 게시한다.
+제출 채널에 thread 생성 권한이 없으면 접수 메시지가 관리자 권한 확인 안내로 바뀌고 재시도나 DLQ 이동 없이 종료된다. 접수 뒤 `/설정 저장`으로 채널이나 정책 버전이 바뀐 회차도 자동 재시도하지 않고 취소하며, 현재 제출 채널에서 새 `/심사`를 실행하도록 안내한다.
+
+그 외 AI 실패는 `ai_output_incomplete` 또는 `ai_output_invalid`, Discord REST 실패는 `discord_service_unavailable` 또는 `discord_request_rejected`로 구분한다. 재시도 가능한 오류는 회차를 queued로 돌리고 SQS가 다시 심사한다. 판결이 이미 저장된 경우 AI와 통계를 반복하지 않고 고정 anchor 게시만 재시도한다.
 
 Discord에서 직접 확인할 최소 시나리오는 다음 순서다.
 
@@ -94,8 +98,9 @@ Discord에서 직접 확인할 최소 시나리오는 다음 순서다.
 2. `/설정 보기`에서 채널과 기본값을 확인한다.
 3. `/help`에서 위 명령 형식이 표시되는지 확인한다.
 4. `/내기록`에서 신규 사용자는 0회 통계를 받는지 확인한다.
-5. `/심사`를 한 번 실행해 deferred 표시가 최종 판결문으로 바뀌는지 확인한다.
-6. 같은 사용자의 `/내기록` 집계가 1회 증가하는지 확인한다.
-7. SQS judge queue와 DLQ backlog가 0인지 확인한다.
+5. 설정된 제출 채널에서 `/심사`를 실행해 공개 thread가 생기는지 확인한다.
+6. thread에 학습 내용을 작성하고 `⚖️ 심사 요청`을 눌러 anchor가 최종 판결문으로 바뀌는지 확인한다.
+7. 같은 사용자의 `/내기록` 집계가 1회 증가하는지 확인한다.
+8. SQS judge queue와 DLQ backlog가 0인지 확인한다.
 
-5번은 실제 OpenAI 과금이 발생하는 수동 검증이다. 자동 배포 smoke는 OpenAI 심사를 호출하지 않는다.
+6번은 실제 OpenAI 과금이 발생하는 수동 검증이다. 자동 배포 smoke는 OpenAI 심사를 호출하지 않는다.

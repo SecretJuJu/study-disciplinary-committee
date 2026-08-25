@@ -49,6 +49,125 @@ describe('DiscordRestClient', () => {
       }),
     ).rejects.toMatchObject({ diagnosticCode: 'discord_request_rejected', status: 404 });
   });
+
+  it('resolves the original interaction without putting the webhook token in headers', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ id: '123456789012345679', channel_id: '123456789012345678' }),
+          { status: 200 },
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DiscordRestClient('bot-token');
+
+    await expect(
+      client.getOriginalMessage({
+        applicationId: '123456789012345677',
+        interactionToken: 'webhook-token',
+      }),
+    ).resolves.toEqual({ id: '123456789012345679', channelId: '123456789012345678' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/webhooks/123456789012345677/webhook-token/messages/@original',
+      expect.objectContaining({ method: 'GET', headers: { 'content-type': 'application/json' } }),
+    );
+  });
+
+  it('creates a public thread once and reuses an existing source-message thread', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '123456789012345679' }), { status: 201 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: '123456789012345679' }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DiscordRestClient('bot-token');
+    const input = {
+      channelId: '123456789012345678',
+      messageId: '123456789012345679',
+      name: '학습-심사-테스트',
+    };
+
+    await expect(client.ensurePublicThread(input)).resolves.toEqual({ id: input.messageId });
+    await expect(client.ensurePublicThread(input)).resolves.toEqual({ id: input.messageId });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      `https://discord.com/api/v10/channels/${input.channelId}/messages/${input.messageId}/threads`,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns a non-retryable setup result when Discord denies thread creation', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DiscordRestClient('bot-token');
+
+    await expect(
+      client.ensurePublicThread({
+        channelId: '123456789012345678',
+        messageId: '123456789012345679',
+        name: '학습-심사-테스트',
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('keeps unknown-message thread setup failures retryable', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DiscordRestClient('bot-token');
+
+    await expect(
+      client.ensurePublicThread({
+        channelId: '123456789012345678',
+        messageId: '123456789012345679',
+        name: '학습-심사-테스트',
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('paginates a bounded thread history with bot authorization', async () => {
+    const threadMessage = {
+      id: '123456789012345679',
+      type: 0,
+      content: '학습 내용',
+      timestamp: '2026-08-25T00:00:00.000000+00:00',
+      author: { id: '123456789012345680', bot: false },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(Array.from({ length: 100 }, () => threadMessage)), {
+          status: 200,
+        }),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify([threadMessage]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new DiscordRestClient('bot-token');
+
+    await expect(client.listThreadMessages('123456789012345679')).resolves.toHaveLength(101);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://discord.com/api/v10/channels/123456789012345679/messages?limit=100',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({ authorization: 'Bot bot-token' }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://discord.com/api/v10/channels/123456789012345679/messages?limit=100&before=123456789012345679',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
 });
 
 describe('OpenAIResponsesClient', () => {
