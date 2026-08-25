@@ -5,6 +5,7 @@ import { DiscordDiagnosticReporter } from '../src/diagnostics.js';
 describe('DiscordDiagnosticReporter', () => {
   it('does not send when a debug channel is not configured', async () => {
     const sent: string[] = [];
+    const logs: string[] = [];
     const reporter = new DiscordDiagnosticReporter(
       {
         sendMessage: async ({ content }) => {
@@ -12,6 +13,7 @@ describe('DiscordDiagnosticReporter', () => {
         },
       },
       undefined,
+      { write: (message) => logs.push(message) },
     );
 
     await reporter.report({
@@ -24,10 +26,17 @@ describe('DiscordDiagnosticReporter', () => {
     });
 
     expect(sent).toEqual([]);
+    expect(logs).toHaveLength(1);
+    expect(JSON.parse(logs[0] ?? '')).toMatchObject({
+      event: 'operational_diagnostic',
+      code: 'processing_failed',
+      correlationId: 'session:s-1',
+    });
   });
 
   it('sends a safe formatted alert to the configured channel', async () => {
     const sent: { channelId: string; content: string }[] = [];
+    const logs: string[] = [];
     const reporter = new DiscordDiagnosticReporter(
       {
         sendMessage: async (input) => {
@@ -35,6 +44,7 @@ describe('DiscordDiagnosticReporter', () => {
         },
       },
       '123456789012345678',
+      { write: (message) => logs.push(message) },
     );
 
     await reporter.report({
@@ -52,5 +62,6 @@ describe('DiscordDiagnosticReporter', () => {
         content: expect.stringContaining('judge'),
       }),
     ]);
+    expect(logs.join('\n')).not.toContain('token');
   });
 });
