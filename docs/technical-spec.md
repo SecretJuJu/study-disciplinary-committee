@@ -93,12 +93,14 @@ SK = SETTINGS
 
 ## 6. 환경변수, secret, IAM
 
-| 함수         | 환경변수 이름                                              | 역할 권한                                                                    |
-| ------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| interactions | `TABLE_NAME`, `JUDGE_QUEUE_URL`, `DISCORD_PUBLIC_KEY`      | DynamoDB Get/Put/Transact, judge queue SendMessage, logs                     |
-| judge        | `TABLE_NAME`, `APP_SECRET_ARN`, `DISCORD_DEBUG_CHANNEL_ID` | DynamoDB Get/Transact, judge queue poll/delete/attributes, secret read, logs |
+| 함수         | 환경변수 이름                                              | 역할 권한                                                                        |
+| ------------ | ---------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| interactions | `TABLE_NAME`, `JUDGE_QUEUE_URL`, `DISCORD_PUBLIC_KEY`      | DynamoDB Get/Put/Transact, judge queue SendMessage, logs                         |
+| judge        | `TABLE_NAME`, `APP_SECRET_ARN`, `DISCORD_DEBUG_CHANNEL_ID` | DynamoDB Get/Put/Transact, judge queue poll/delete/attributes, secret read, logs |
 
 실제 OpenAI key와 Discord bot token은 Secrets Manager의 JSON secret 한 개에 `OPENAI_API_KEY`, `DISCORD_BOT_TOKEN` 필드로 저장한다. GitHub Actions는 secret 값을 Pulumi encrypted config로 전달하고 출력하지 않는다. interaction Lambda에는 secret read 권한이 없다. runtime role에는 bootstrap이 만든 permissions boundary를 적용한다.
+
+Judge의 `PutItem`은 `dynamodb:EnclosingOperation = TransactWriteItems` IAM 조건으로 transaction 내부 작업에만 제한한다.
 
 ## 7. 안전 진단
 

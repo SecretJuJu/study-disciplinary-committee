@@ -206,3 +206,10 @@
 ### LEARNINGS
 
 - 모델 조회 HTTP 200은 생성 크레딧을 보장하지 않는다. 배포 smoke와 별도로 최소 Responses 호출 또는 OpenAI usage/billing 확인이 필요하다.
+
+[2026-08-25 09:28] - DynamoDB transaction IAM
+
+### LEARNINGS
+
+- `dynamodb:TransactWriteItems` 허용만으로 transaction 내부 Put 권한이 충족되지 않는다. Judge 역할에는 transaction API 권한과 함께 내부 작업에 해당하는 `dynamodb:PutItem`이 필요하며, `dynamodb:EnclosingOperation = TransactWriteItems` 조건으로 독립 Put을 차단할 수 있다.
+- IAM simulator에서 `TransactWriteItems`만 단독 확인하면 이 누락을 놓칠 수 있다. transaction을 사용하는 역할은 API 작업과 내부 item 작업 권한을 함께 검증한다.

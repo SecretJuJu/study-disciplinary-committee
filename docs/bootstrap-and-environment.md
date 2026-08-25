@@ -89,12 +89,14 @@ master push
 
 현재 Pulumi production runtime 계약은 다음과 같다.
 
-| Lambda       | Node/timeout      | 환경변수 이름                                              | 허용 AWS 작업                                                                 |
-| ------------ | ----------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| interactions | Node.js 24 / 10초 | `TABLE_NAME`, `JUDGE_QUEUE_URL`, `DISCORD_PUBLIC_KEY`      | DynamoDB Get/Put/Transact, judge SQS SendMessage, logs                        |
-| judge        | Node.js 24 / 90초 | `TABLE_NAME`, `APP_SECRET_ARN`, `DISCORD_DEBUG_CHANNEL_ID` | DynamoDB Get/Transact, judge SQS consume/delete/attributes, secret read, logs |
+| Lambda       | Node/timeout      | 환경변수 이름                                              | 허용 AWS 작업                                                                     |
+| ------------ | ----------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| interactions | Node.js 24 / 10초 | `TABLE_NAME`, `JUDGE_QUEUE_URL`, `DISCORD_PUBLIC_KEY`      | DynamoDB Get/Put/Transact, judge SQS SendMessage, logs                            |
+| judge        | Node.js 24 / 90초 | `TABLE_NAME`, `APP_SECRET_ARN`, `DISCORD_DEBUG_CHANNEL_ID` | DynamoDB Get/Put/Transact, judge SQS consume/delete/attributes, secret read, logs |
 
 interaction 역할은 OpenAI/Discord secret을 읽을 수 없다. Judge 역할만 `APP_SECRET_ARN`의 JSON secret에서 `OPENAI_API_KEY`와 `DISCORD_BOT_TOKEN`을 읽는다. 두 역할 모두 `disciplinary-committee-runtime-boundary`를 적용한다. 실제 환경변수 값과 secret 내용은 AWS CLI 출력이나 Actions log로 조회하지 않는다.
+
+Judge의 `PutItem`은 `dynamodb:EnclosingOperation = TransactWriteItems` IAM 조건으로 제한한다. 판결과 통계의 transaction 내부 Put에는 사용할 수 있지만 독립 `PutItem` 호출에는 사용할 수 없다.
 
 Pulumi는 judge queue와 DLQ, batch size 1의 Judge event source mapping 및 `ReportBatchItemFailures`, DynamoDB on-demand/PITR/TTL, 월 $3 Budget을 관리한다. Scheduler group과 outbox queue는 향후 범위를 위해 존재하지만 현재 worker/trigger는 활성화하지 않는다.
 

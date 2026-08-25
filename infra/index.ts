@@ -129,6 +129,16 @@ const judgeRuntimePolicy = new aws.iam.RolePolicy(`${name}-judge-runtime-policy`
           },
           {
             Effect: 'Allow',
+            Action: ['dynamodb:PutItem'],
+            Resource: tableArn,
+            Condition: {
+              StringEquals: {
+                'dynamodb:EnclosingOperation': 'TransactWriteItems',
+              },
+            },
+          },
+          {
+            Effect: 'Allow',
             Action: ['sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:GetQueueAttributes'],
             Resource: judgeArn,
           },
