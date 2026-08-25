@@ -1,11 +1,11 @@
 import {
   commandHelp,
+  deferredUpdateMessageResponse,
   ephemeralMessageResponse,
   hasManageGuildPermission,
   parseApplicationCommand,
   parseReviewButton,
   publicMessageResponse,
-  updateMessageResponse,
   type DiscordInteraction,
 } from '@disciplinary-committee/discord';
 import {
@@ -17,7 +17,6 @@ import {
 import type {
   CreateThreadReviewInput,
   SaveGuildSettingsInput,
-  ThreadReviewSession,
 } from '@disciplinary-committee/persistence';
 
 import type { ThreadReviewJob } from './review-jobs.js';
@@ -29,19 +28,6 @@ export type InteractionRepository = {
   saveGuildSettings(input: SaveGuildSettingsInput): Promise<void>;
   getUserStats(guildId: string, userId: string): Promise<UserStats | undefined>;
   createThreadReview(input: CreateThreadReviewInput): Promise<'created' | 'existing'>;
-  getThreadReview(guildId: string, sessionId: string): Promise<ThreadReviewSession | undefined>;
-  claimThreadReview(input: {
-    guildId: string;
-    sessionId: string;
-    ownerId: string;
-    anchorMessageId: string;
-    now: string;
-  }): Promise<boolean>;
-  reopenThreadReview(input: {
-    guildId: string;
-    sessionId: string;
-    expectedState: 'queued' | 'judging';
-  }): Promise<void>;
 };
 
 export type JudgeQueue = {
@@ -57,7 +43,7 @@ export type InteractionDependencies = {
 type InteractionResponse =
   | ReturnType<typeof ephemeralMessageResponse>
   | ReturnType<typeof publicMessageResponse>
-  | ReturnType<typeof updateMessageResponse>;
+  | typeof deferredUpdateMessageResponse;
 
 function guildContext(
   interaction: DiscordInteraction,
@@ -240,55 +226,20 @@ export async function routeComponentInteraction(
     return ephemeralMessageResponse('이 버튼은 Discord 서버 안에서만 사용할 수 있습니다.');
   }
   const button = parseReviewButton(interaction);
-  const settings = await dependencies.repository.getGuildSettings(context.guildId);
-  const session = await dependencies.repository.getThreadReview(context.guildId, button.sessionId);
-  if (
-    settings === undefined ||
-    !settings.enabled ||
-    session === undefined ||
-    session.channelId !== settings.submissionChannelId ||
-    session.configVersion !== settings.configVersion ||
-    session.ownerId !== context.userId ||
-    session.anchorMessageId !== button.messageId ||
-    session.threadId === undefined ||
-    Date.parse(session.deadlineAt) < dependencies.now().getTime() ||
-    (interaction.channel_id !== session.channelId && interaction.channel_id !== session.threadId)
-  ) {
-    return ephemeralMessageResponse(
-      '이 심사 요청을 실행할 권한이 없거나 접수 정보가 일치하지 않습니다.',
-    );
+  const channelId = interaction.channel_id;
+  if (channelId === undefined) {
+    return ephemeralMessageResponse('이 버튼은 Discord 서버 채널 안에서만 사용할 수 있습니다.');
   }
-
-  const claimed = await dependencies.repository.claimThreadReview({
+  const requestedAt = dependencies.now().toISOString();
+  await dependencies.judgeQueue.enqueue({
+    kind: 'request_review',
     guildId: context.guildId,
-    sessionId: session.sessionId,
-    ownerId: context.userId,
+    sessionId: button.sessionId,
+    userId: context.userId,
+    channelId,
     anchorMessageId: button.messageId,
-    now: dependencies.now().toISOString(),
+    requestedAt,
   });
-  if (!claimed) {
-    return ephemeralMessageResponse('이미 심사를 요청했거나 현재 처리 중인 접수입니다.');
-  }
 
-  try {
-    await dependencies.judgeQueue.enqueue({
-      kind: 'judge_thread',
-      guildId: context.guildId,
-      sessionId: session.sessionId,
-      userId: context.userId,
-    });
-  } catch (error) {
-    try {
-      await dependencies.repository.reopenThreadReview({
-        guildId: context.guildId,
-        sessionId: session.sessionId,
-        expectedState: 'queued',
-      });
-    } catch {
-      // 원래 enqueue 오류를 유지해 상위 경계가 안전한 사용자 메시지로 변환한다.
-    }
-    throw error;
-  }
-
-  return updateMessageResponse('**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.');
+  return deferredUpdateMessageResponse;
 }

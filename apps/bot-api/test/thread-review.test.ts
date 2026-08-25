@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { NonRetryableModelError } from '../src/model-errors.js';
 import type { ModelClient } from '../src/judge.js';
-import type { JudgeThreadJob, PrepareReviewJob } from '../src/review-jobs.js';
+import type { JudgeThreadJob, PrepareReviewJob, RequestReviewJob } from '../src/review-jobs.js';
 import {
   reviewSnapshotCharacterLimit,
   snapshotOwnerMessages,
@@ -92,6 +92,11 @@ function repository(overrides: Partial<ThreadReviewRepository> = {}): ThreadRevi
   return {
     getThreadReview: async () => session,
     bindThreadReview: async () => undefined,
+    claimThreadReview: async () => ({
+      ...session,
+      state: 'queued',
+      claimedAt: fixedNow.toISOString(),
+    }),
     claimThreadReviewForJudging: async () => session,
     reopenThreadReview: async () => undefined,
     releaseThreadReview: async () => undefined,
@@ -275,6 +280,76 @@ describe('ThreadReviewWorker', () => {
     expect(editOriginal).toHaveBeenCalledWith(
       expect.objectContaining({ content: expect.stringContaining('Create Public Threads') }),
     );
+  });
+
+  it('claims and authorizes a queued button request before starting AI work', async () => {
+    const requestedAt = fixedNow.toISOString();
+    const requestJob: RequestReviewJob = {
+      kind: 'request_review',
+      guildId,
+      sessionId,
+      userId: ownerId,
+      channelId,
+      anchorMessageId,
+      requestedAt,
+    };
+    const claimThreadReview = vi.fn<ThreadReviewRepository['claimThreadReview']>(async () => ({
+      ...session,
+      state: 'queued',
+      claimedAt: requestedAt,
+    }));
+    const editChannelMessage = vi.fn<DiscordThreadClient['editChannelMessage']>();
+    const modelClient = model();
+    const worker = new ThreadReviewWorker(
+      modelClient,
+      repository({ claimThreadReview }),
+      discord({ editChannelMessage }),
+    );
+
+    await worker.process(requestJob, fixedNow);
+
+    expect(claimThreadReview).toHaveBeenCalledWith({
+      guildId,
+      sessionId,
+      ownerId,
+      channelId,
+      anchorMessageId,
+      now: requestedAt,
+    });
+    expect(editChannelMessage).toHaveBeenNthCalledWith(1, {
+      channelId,
+      messageId: anchorMessageId,
+      content: '**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.',
+      components: [],
+    });
+    expect(modelClient.create).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when a queued button actor does not own the stored session', async () => {
+    const attackerId = '1541459000000000099';
+    const modelClient = model();
+    const editChannelMessage = vi.fn<DiscordThreadClient['editChannelMessage']>();
+    const worker = new ThreadReviewWorker(
+      modelClient,
+      repository({ claimThreadReview: async () => undefined }),
+      discord({ editChannelMessage }),
+    );
+
+    await worker.process(
+      {
+        kind: 'request_review',
+        guildId,
+        sessionId,
+        userId: attackerId,
+        channelId,
+        anchorMessageId,
+        requestedAt: fixedNow.toISOString(),
+      },
+      fixedNow,
+    );
+
+    expect(modelClient.create).not.toHaveBeenCalled();
+    expect(editChannelMessage).not.toHaveBeenCalled();
   });
 
   it('reopens an empty submission with a button and does not call AI', async () => {

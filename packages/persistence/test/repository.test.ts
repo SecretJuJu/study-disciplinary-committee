@@ -409,29 +409,56 @@ describe('DynamoReviewRepository thread review state machine', () => {
   });
 
   it('binds the stable anchor/thread and claims the button only before the deadline', async () => {
-    const { repository, commands } = repositoryWith();
+    const anchorMessageId = '1541459000000000008';
+    const threadId = '1541459000000000009';
+    const { repository, commands } = repositoryWith({
+      send: async () =>
+        commands.length === 1
+          ? {}
+          : {
+              Attributes: {
+                PK: `GUILD#${guildId}`,
+                SK: `SESSION#${sessionId}`,
+                entityType: 'ThreadReviewSession',
+                sessionId,
+                guildId,
+                ownerId: userId,
+                channelId: settings.submissionChannelId,
+                state: 'queued',
+                createdAt,
+                deadlineAt,
+                expiresAt,
+                configVersion: settings.configVersion,
+                anchorMessageId,
+                threadId,
+                claimedAt: createdAt,
+              },
+            },
+    });
     await repository.bindThreadReview({
       guildId,
       sessionId,
       ownerId: userId,
       channelId: settings.submissionChannelId,
-      anchorMessageId: '1541459000000000008',
-      threadId: '1541459000000000009',
+      anchorMessageId,
+      threadId,
     });
     await expect(
       repository.claimThreadReview({
         guildId,
         sessionId,
         ownerId: userId,
-        anchorMessageId: '1541459000000000008',
+        channelId: settings.submissionChannelId,
+        anchorMessageId,
         now: createdAt,
       }),
-    ).resolves.toBe(true);
+    ).resolves.toMatchObject({ state: 'queued', claimedAt: createdAt });
 
     const bind = (commands[0] as UpdateCommand).input;
     const claim = (commands[1] as UpdateCommand).input;
     expect(bind.ConditionExpression).toContain('anchorMessageId = :anchor');
     expect(claim.ConditionExpression).toContain('deadlineAt >= :now');
+    expect(claim.ConditionExpression).toContain('(channelId = :channel OR threadId = :channel)');
     expect(claim.ExpressionAttributeValues).toMatchObject({
       ':draft': 'draft',
       ':queued': 'queued',
@@ -439,7 +466,7 @@ describe('DynamoReviewRepository thread review state machine', () => {
     });
   });
 
-  it('returns false for a duplicate conditional button claim', async () => {
+  it('returns undefined for a duplicate conditional button claim', async () => {
     const conflict = Object.assign(new Error('duplicate'), {
       name: 'ConditionalCheckFailedException',
     });
@@ -450,10 +477,11 @@ describe('DynamoReviewRepository thread review state machine', () => {
         guildId,
         sessionId,
         ownerId: userId,
+        channelId: settings.submissionChannelId,
         anchorMessageId: '1541459000000000008',
         now: createdAt,
       }),
-    ).resolves.toBe(false);
+    ).resolves.toBeUndefined();
   });
 
   it('claims a queued job with a retry lease and parses the strict returned record', async () => {

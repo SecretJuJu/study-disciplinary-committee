@@ -35,7 +35,7 @@ Interactions Endpoint URL은 직접 붙여넣을 필요가 없다. `master` 배�
 - `/설정 보기`와 `/설정 저장`은 서버 관리 권한이 있어야 한다.
 - `/설정 저장` 전에는 `/심사`를 실행할 수 없다.
 
-`/help`, `/설정`, `/내기록`은 OpenAI 없이 코드와 DynamoDB로 즉시 응답한다. `/심사`만 OpenAI를 사용한다. Lambda 스트리밍이나 무기한 “생각 중” 표시는 사용하지 않는다. prepare와 judge-thread 작업은 기존 SQS/Judge Lambda가 처리하고, 최종 판결은 bot REST로 고정 anchor 메시지를 수정한다.
+`/help`, `/설정`, `/내기록`은 OpenAI 없이 코드와 DynamoDB로 즉시 응답한다. `/심사`만 OpenAI를 사용한다. Lambda 스트리밍은 사용하지 않는다. 버튼은 request-review job을 기록한 직후 Discord에 type 6으로 응답하고, 권한 확인과 judge-thread 처리는 기존 SQS/Judge Lambda가 이어받는다. 최종 판결은 bot REST로 고정 anchor 메시지를 수정한다.
 
 ## 3. 설정 저장 동작
 

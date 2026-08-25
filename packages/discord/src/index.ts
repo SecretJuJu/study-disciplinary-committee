@@ -1,5 +1,6 @@
 export {
   deferredChannelMessageResponse,
+  deferredUpdateMessageResponse,
   ephemeralMessageResponse,
   hasManageGuildPermission,
   parseApplicationCommand,

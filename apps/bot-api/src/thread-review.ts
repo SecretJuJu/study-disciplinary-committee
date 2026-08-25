@@ -13,7 +13,7 @@ import {
   NonRetryableModelError,
   RetryableModelError,
 } from './model-errors.js';
-import type { PrepareReviewJob, ThreadReviewJob } from './review-jobs.js';
+import type { PrepareReviewJob, RequestReviewJob, ThreadReviewJob } from './review-jobs.js';
 import { threadReviewJobSchema } from './review-jobs.js';
 
 export const reviewSnapshotCharacterLimit = 6_000;
@@ -62,6 +62,14 @@ export type ThreadReviewRepository = {
     anchorMessageId: string;
     threadId: string;
   }): Promise<void>;
+  claimThreadReview(input: {
+    guildId: string;
+    sessionId: string;
+    ownerId: string;
+    channelId: string;
+    anchorMessageId: string;
+    now: string;
+  }): Promise<ThreadReviewSession | undefined>;
   claimThreadReviewForJudging(input: {
     guildId: string;
     sessionId: string;
@@ -146,6 +154,7 @@ function finalContent(judgment: Judgment): string {
 
 const cancelledContent =
   '서버 심사 설정이 접수 후 변경되어 이 요청을 취소했습니다. 현재 설정된 제출 채널에서 새 `/심사`를 실행해주세요.';
+const judgingContent = '**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.';
 
 function initialStats(userId: string): UserStats {
   return {
@@ -178,6 +187,8 @@ export class ThreadReviewWorker {
     try {
       if (job.kind === 'prepare_review') {
         await this.prepare(job);
+      } else if (job.kind === 'request_review') {
+        await this.requestReview(job, now);
       } else {
         await this.judge(job, now);
       }
@@ -185,6 +196,48 @@ export class ThreadReviewWorker {
       await this.reportFailure(error, job.sessionId);
       throw error;
     }
+  }
+
+  private async requestReview(job: RequestReviewJob, now: Date): Promise<void> {
+    const claimed = await this.repository.claimThreadReview({
+      guildId: job.guildId,
+      sessionId: job.sessionId,
+      ownerId: job.userId,
+      channelId: job.channelId,
+      anchorMessageId: job.anchorMessageId,
+      now: job.requestedAt,
+    });
+    const session = claimed ?? (await this.repository.getThreadReview(job.guildId, job.sessionId));
+    if (
+      session === undefined ||
+      session.ownerId !== job.userId ||
+      session.anchorMessageId !== job.anchorMessageId ||
+      session.threadId === undefined ||
+      (session.channelId !== job.channelId && session.threadId !== job.channelId)
+    ) {
+      return;
+    }
+    if (session.state === 'draft') {
+      return;
+    }
+
+    if (claimed !== undefined) {
+      await this.discord.editChannelMessage({
+        channelId: session.channelId,
+        messageId: session.anchorMessageId,
+        content: judgingContent,
+        components: [],
+      });
+    }
+    await this.judge(
+      {
+        kind: 'judge_thread',
+        guildId: job.guildId,
+        sessionId: job.sessionId,
+        userId: job.userId,
+      },
+      now,
+    );
   }
 
   private async prepare(job: PrepareReviewJob): Promise<void> {

@@ -33,7 +33,7 @@
 | CI/CD       | GitHub Actions, GitHub OIDC, `master` push 자동 배포           |
 | 리전        | `ap-northeast-2`                                               |
 
-Lambda 응답 스트리밍은 사용하지 않는다. `/심사`는 type 4 공개 접수 메시지를 즉시 반환한다. Judge Lambda가 Discord webhook으로 원본 메시지를 한 번 조회해 public thread를 준비한 뒤, 이후 안내·판결·안전 실패는 bot REST로 고정 anchor 메시지를 수정한다. 짧게 만료되는 webhook token은 준비 작업 이후 사용하지 않는다.
+Lambda 응답 스트리밍은 사용하지 않는다. `/심사`는 type 4 공개 접수 메시지를 즉시 반환한다. 버튼은 SQS 기록 직후 component용 type 6 ACK를 반환하고, 권한 검증·snapshot·AI 심사는 Judge Lambda가 비동기로 수행한다. Judge Lambda가 Discord webhook으로 원본 메시지를 한 번 조회해 public thread를 준비한 뒤, 이후 안내·판결·안전 실패는 bot REST로 고정 anchor 메시지를 수정한다. 짧게 만료되는 webhook token은 준비 작업 이후 사용하지 않는다.
 
 ```text
 Discord
@@ -46,7 +46,8 @@ API Gateway ──► interactions Lambda
                                                      ▼
                                                judge Lambda
                                                 ├─ public thread + button
-                                                └─ button job → current snapshot
+                                                └─ button → type 6 ACK + request-review SQS
+                                                     └─ 조건부 claim → current snapshot
                                                      ├─ OpenAI Responses API
                                                      ├─ DynamoDB transaction
                                                      └─ stable anchor edit
@@ -57,7 +58,8 @@ API Gateway ──► interactions Lambda
 - `/설정 저장`의 두 채널은 guild text channel만 허용한다.
 - `/심사`에는 옵션이 없다. 설정된 제출 채널에서만 실행할 수 있다.
 - bot이 공개 스레드를 준비하면 접수 소유자가 일반 텍스트 메시지를 작성하고 `⚖️ 심사 요청` 버튼을 누른다.
-- 버튼은 guild, 소유자, anchor 메시지, thread/채널, 설정 버전의 회차 상태를 fail-closed로 검증한다.
+- 버튼 endpoint는 Discord 서명과 component payload를 검증하고 request-review job 하나만 기록한 뒤 3초 안에 type 6으로 ACK한다. Judge worker가 guild, 소유자, anchor 메시지, thread/채널, 마감, 설정 버전의 회차 상태를 fail-closed로 검증한다.
+- Discord의 component `data.id`는 32-bit 정수이며 legacy component의 `0`도 허용한다. application command의 `data.id` snowflake와 경계 parser에서 구분한다.
 - Discord payload, command option, snowflake ID, SQS body는 경계에서 Zod로 검증한다.
 - `default_member_permissions=32`에 더해 `/설정 보기`와 `/설정 저장` 모두 런타임에서 `Manage Guild`를 fail-closed로 확인한다.
 - help/settings/stats와 거절 응답은 ephemeral이다. 심사 접수·안내·판결은 구성원이 볼 수 있는 고정 anchor 메시지다.
@@ -89,7 +91,8 @@ SK = SETTINGS
 ## 5. 비동기 신뢰성
 
 - interaction Lambda는 draft를 조건부 생성하고 prepare queue를 1초 지연 enqueue한 뒤 공개 type 4 응답을 반환한다. 이 짧은 지연은 Discord가 callback 원본 메시지를 생성하기 전에 worker가 조회하는 경쟁을 줄인다.
-- component handler는 `draft → queued`를 조건부 claim한 뒤 judge-thread job 하나만 보낸다. enqueue 실패 시 `draft`로 되돌린다.
+- component handler는 signed actor·guild·channel·anchor·요청 시각을 request-review queue에 한 번 기록하고 type 6으로 ACK한다. DynamoDB 조회와 AI 호출은 ACK 경로에 두지 않는다.
+- Judge worker는 job의 binding과 마감을 DynamoDB 조건식으로 확인하면서 `draft → queued`를 claim하고, 고정 anchor를 `심사 중`으로 바꾼 뒤 judge-thread 처리를 이어간다.
 - Judge는 `queued → judging` 또는 만료 lease만 claim한다. 정상 실행의 8분 lease는 SQS 중복 AI 호출을 억제하고, 실패는 `queued`로 되돌려 재시도한다.
 - 빈 snapshot은 AI를 호출하지 않고 `draft`와 버튼을 복구한다. 이미 finalized인 중복 job은 기존 판결을 anchor에 재게시한다.
 - thread 생성 권한 부족과 접수 뒤 설정 변경은 재시도로 회복되지 않으므로 명확한 안내를 anchor에 게시하고 정상 종료한다. 설정이 변경된 회차는 `cancelled`로 닫고 새 `/심사`를 요구한다.

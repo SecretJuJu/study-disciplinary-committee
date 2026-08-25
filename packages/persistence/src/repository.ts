@@ -343,31 +343,38 @@ export class DynamoReviewRepository {
     guildId: string;
     sessionId: string;
     ownerId: string;
+    channelId: string;
     anchorMessageId: string;
     now: string;
-  }): Promise<boolean> {
+  }): Promise<ThreadReviewSession | undefined> {
     try {
-      await this.client.send(
+      const result = await this.client.send(
         new UpdateCommand({
           TableName: this.tableName,
           Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
           UpdateExpression: 'SET #state = :queued, claimedAt = :now',
           ConditionExpression:
-            '#state = :draft AND ownerId = :owner AND anchorMessageId = :anchor AND attribute_exists(threadId) AND deadlineAt >= :now',
+            '#state = :draft AND ownerId = :owner AND anchorMessageId = :anchor AND attribute_exists(threadId) AND (channelId = :channel OR threadId = :channel) AND deadlineAt >= :now',
           ExpressionAttributeNames: { '#state': 'state' },
           ExpressionAttributeValues: {
             ':draft': 'draft',
             ':queued': 'queued',
             ':owner': input.ownerId,
+            ':channel': input.channelId,
             ':anchor': input.anchorMessageId,
             ':now': input.now,
           },
+          ReturnValues: 'ALL_NEW',
         }),
       );
-      return true;
+      if (!isRecord(result.Attributes)) {
+        throw new TypeError('Claimed thread review attributes are missing');
+      }
+      const { PK: _pk, SK: _sk, entityType: _entityType, ...session } = result.Attributes;
+      return threadReviewSessionSchema.parse(session);
     } catch (error) {
       if (isConditionalFailure(error)) {
-        return false;
+        return undefined;
       }
       throw error;
     }

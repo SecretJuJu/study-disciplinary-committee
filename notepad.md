@@ -327,3 +327,10 @@
 
 - 최종 로컬 검증은 16개 파일 111개 테스트와 자격증명·환경파일·interaction secret marker 0건으로 확정했다. 다음 단계는 이 증거를 유지한 채 commit/push/deploy 결과를 별도로 기록하는 것이다.
 - 배포 smoke에서 403 권한 안내가 나오면 Developer Portal과 submission 채널의 Create Public Threads/Send Messages in Threads 권한을 먼저 확인한다.
+
+[2026-08-25 12:32] - Discord component ACK 경계
+
+### LEARNINGS
+
+- Discord application command의 `data.id`는 snowflake 문자열이지만 message component의 `data.id`는 32-bit 정수이며 legacy component는 `0`을 보낼 수 있다. 공용 interaction parser에서 두 형태를 구분해 수용해야 한다.
+- component interaction은 3초 안에 초기 응답이 필요하다. 버튼 경로는 signed 요청을 request-review SQS에 기록한 뒤 type 6으로 ACK하고, DynamoDB 조건부 권한 검증·상태 전이·AI 처리는 Judge worker에서 수행한다.

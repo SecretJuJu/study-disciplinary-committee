@@ -131,6 +131,12 @@ class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
     return this.repository.bindThreadReview(input);
   }
 
+  public claimThreadReview(
+    input: Parameters<ThreadReviewRepository['claimThreadReview']>[0],
+  ): Promise<ThreadReviewSession | undefined> {
+    return this.repository.claimThreadReview(input);
+  }
+
   public claimThreadReviewForJudging(
     input: Parameters<ThreadReviewRepository['claimThreadReviewForJudging']>[0],
   ): Promise<ThreadReviewSession | undefined> {

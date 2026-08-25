@@ -148,7 +148,7 @@ describe('review button parsing', () => {
   it('strictly binds a button custom id to its source message', () => {
     expect(
       parseReviewButton(
-        component({ component_type: 2, custom_id: 'review_submit:1541459000000000002' }),
+        component({ id: 0, component_type: 2, custom_id: 'review_submit:1541459000000000002' }),
       ),
     ).toEqual({
       sessionId: '1541459000000000002',

@@ -4,6 +4,7 @@ import { z } from 'zod';
 const maxClockSkewMilliseconds = 5 * 60 * 1_000;
 const manageGuildPermission = 0x20n;
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/);
+const componentIdSchema = z.number().int().min(0).max(0xffff_ffff);
 
 const interactionSchema = z.object({
   type: z.number().int(),
@@ -21,7 +22,9 @@ const interactionSchema = z.object({
     .optional(),
   data: z
     .object({
-      id: snowflakeSchema.optional(),
+      // Application commands use a snowflake; component interactions use a
+      // generated 32-bit component id (including 0 for legacy components).
+      id: z.union([snowflakeSchema, componentIdSchema]).optional(),
       type: z.number().int().optional(),
       name: z.string().min(1).max(32).optional(),
       custom_id: z.string().max(100).optional(),
@@ -164,6 +167,7 @@ export function parseApplicationCommand(interaction: DiscordInteraction): Parsed
 
 const reviewButtonDataSchema = z
   .object({
+    id: componentIdSchema.optional(),
     component_type: z.literal(2),
     custom_id: z.string().regex(/^review_submit:\d{17,20}$/),
   })
@@ -231,6 +235,7 @@ export function hasManageGuildPermission(interaction: DiscordInteraction): boole
 
 export const pongResponse = { type: 1 } as const;
 export const deferredChannelMessageResponse = { type: 5 } as const;
+export const deferredUpdateMessageResponse = { type: 6 } as const;
 export const ephemeralMessageResponse = (content: string) => ({
   type: 4,
   data: { content, flags: 1 << 6 },
