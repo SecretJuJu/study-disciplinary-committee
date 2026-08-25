@@ -26,6 +26,8 @@ export const judgeThreadJobSchema = z
 export const requestReviewJobSchema = z
   .object({
     kind: z.literal('request_review'),
+    action: z.enum(['initial', 'appeal']).default('initial'),
+    requestId: snowflakeSchema.optional(),
     guildId: snowflakeSchema,
     sessionId: snowflakeSchema,
     userId: snowflakeSchema,

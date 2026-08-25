@@ -7,8 +7,11 @@ export type {
   PersistedSubmission,
   SaveGuildSettingsInput,
   FinalizeThreadJudgmentInput,
+  FinalizeThreadAppealInput,
+  CurrentThreadVerdict,
 } from './repository.js';
 export {
+  appealSk,
   guildPk,
   idempotencyPk,
   sessionPk,
@@ -23,6 +26,8 @@ export type {
   ReviewSessionRecord,
   ThreadReviewSession,
   ThreadReviewSessionRecord,
+  ThreadReviewAction,
+  ThreadAppealRecord,
   ThreadReviewState,
   SubmissionRecord,
   UserStatsRecord,

@@ -449,6 +449,8 @@ describe('interaction Lambda', () => {
 
     expect(judgeQueue.enqueue).toHaveBeenCalledWith({
       kind: 'request_review',
+      action: 'initial',
+      requestId: '1541459000000000010',
       guildId,
       sessionId: interactionId,
       userId,
@@ -471,6 +473,8 @@ describe('interaction Lambda', () => {
     expect(JSON.parse(deniedResponse.body ?? '')).toEqual({ type: 6 });
     expect(denied.judgeQueue.enqueue).toHaveBeenCalledWith({
       kind: 'request_review',
+      action: 'initial',
+      requestId: '1541459000000000010',
       userId: otherUserId,
       guildId,
       sessionId: interactionId,

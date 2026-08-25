@@ -56,6 +56,7 @@ describe('command help', () => {
     expect(commandHelp).toContain('`/심사`');
     expect(commandHelp).toContain('공개 스레드에 학습 내용을 메시지로 작성');
     expect(commandHelp).toContain('`⚖️ 심사 요청` 버튼');
+    expect(commandHelp).toContain('항소는 최대 2회');
     expect(commandHelp).toContain('`/내기록`');
     expect(commandHelp).not.toContain('/운영상태');
   });

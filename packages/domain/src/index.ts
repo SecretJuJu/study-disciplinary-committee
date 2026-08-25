@@ -7,6 +7,7 @@ export {
 export type { DiagnosticComponent, DiagnosticEvent } from './diagnostics.js';
 export {
   pointsForOutcome,
+  replaceStatsForJudgment,
   toPromptSubmission,
   transitionReviewSession,
   updateStatsForAbsence,

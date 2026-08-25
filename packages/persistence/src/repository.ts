@@ -8,7 +8,9 @@ import {
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import {
   guildSettingsSchema,
+  judgmentSchema,
   pointsForOutcome,
+  replaceStatsForJudgment,
   updateStatsForAbsence,
   updateStatsForJudgment,
   userStatsSchema,
@@ -20,6 +22,7 @@ import {
 import { z } from 'zod';
 
 import {
+  appealSk,
   guildPk,
   sessionPk,
   sessionSk,
@@ -35,6 +38,7 @@ import type {
   ThreadReviewSession,
   ThreadReviewSessionRecord,
   ThreadReviewState,
+  ThreadAppealRecord,
   VerdictRecord,
 } from './types.js';
 
@@ -81,6 +85,27 @@ export type CreateThreadReviewInput = {
 
 export type FinalizeThreadJudgmentInput = FinalizeJudgmentInput;
 
+export type CurrentThreadVerdict = {
+  judgment: Judgment;
+  pointsDelta: number;
+  finalizedAt: string;
+  revision: number;
+};
+
+export type FinalizeThreadAppealInput = {
+  guildId: string;
+  sessionId: string;
+  userId: string;
+  stats: UserStats;
+  previousVerdict: CurrentThreadVerdict;
+  judgment: Judgment;
+  scorePolicy: ScorePolicy;
+  finalizedAt: string;
+  expiresAt: number;
+  expectedAppealsUsed: number;
+  requestId: string;
+};
+
 const snowflakeSchema = z.string().regex(/^\d{17,20}$/);
 const threadReviewSessionSchema = z
   .object({
@@ -97,6 +122,12 @@ const threadReviewSessionSchema = z
     threadId: snowflakeSchema.optional(),
     leaseUntil: z.string().datetime().optional(),
     claimedAt: z.string().datetime().optional(),
+    initialClaimedAt: z.string().datetime().optional(),
+    appealFromAt: z.string().datetime().optional(),
+    pendingAction: z.enum(['initial', 'appeal']).optional(),
+    appealsUsed: z.number().int().min(0).max(2).optional(),
+    pendingRequestId: snowflakeSchema.optional(),
+    lastProcessedRequestId: snowflakeSchema.optional(),
   })
   .strict();
 
@@ -252,7 +283,7 @@ export class DynamoReviewRepository {
   }
 
   public async createThreadReview(input: CreateThreadReviewInput): Promise<'created' | 'existing'> {
-    const session = threadReviewSessionSchema.parse({ ...input, state: 'draft' });
+    const session = threadReviewSessionSchema.parse({ ...input, state: 'draft', appealsUsed: 0 });
     const item = {
       PK: guildPk(input.guildId),
       SK: sessionSk(input.sessionId),
@@ -339,6 +370,46 @@ export class DynamoReviewRepository {
     );
   }
 
+  public async getThreadVerdict(
+    sessionId: string,
+    userId: string,
+  ): Promise<CurrentThreadVerdict | undefined> {
+    const result = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { PK: sessionPk(sessionId), SK: verdictSk(userId) },
+        ConsistentRead: true,
+      }),
+    );
+    if (result.Item === undefined) {
+      return undefined;
+    }
+    if (!isRecord(result.Item)) {
+      throw new TypeError('Stored thread verdict must be an object');
+    }
+    const schema = z
+      .object({
+        PK: z.literal(sessionPk(sessionId)),
+        SK: z.literal(verdictSk(userId)),
+        entityType: z.literal('Verdict'),
+        sessionId: z.literal(sessionId),
+        userId: z.literal(userId),
+        judgment: judgmentSchema,
+        pointsDelta: z.number().int().nonnegative(),
+        finalizedAt: z.string().datetime(),
+        reason: z.literal('judgment'),
+        revision: z.number().int().min(0).max(2).optional(),
+      })
+      .strict();
+    const verdict = schema.parse(result.Item);
+    return {
+      judgment: verdict.judgment,
+      pointsDelta: verdict.pointsDelta,
+      finalizedAt: verdict.finalizedAt,
+      revision: verdict.revision ?? 0,
+    };
+  }
+
   public async claimThreadReview(input: {
     guildId: string;
     sessionId: string;
@@ -352,7 +423,8 @@ export class DynamoReviewRepository {
         new UpdateCommand({
           TableName: this.tableName,
           Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
-          UpdateExpression: 'SET #state = :queued, claimedAt = :now',
+          UpdateExpression:
+            'SET #state = :queued, claimedAt = :now, initialClaimedAt = if_not_exists(initialClaimedAt, :now), pendingAction = :initial',
           ConditionExpression:
             '#state = :draft AND ownerId = :owner AND anchorMessageId = :anchor AND attribute_exists(threadId) AND (channelId = :channel OR threadId = :channel) AND deadlineAt >= :now',
           ExpressionAttributeNames: { '#state': 'state' },
@@ -363,12 +435,63 @@ export class DynamoReviewRepository {
             ':channel': input.channelId,
             ':anchor': input.anchorMessageId,
             ':now': input.now,
+            ':initial': 'initial',
           },
           ReturnValues: 'ALL_NEW',
         }),
       );
       if (!isRecord(result.Attributes)) {
         throw new TypeError('Claimed thread review attributes are missing');
+      }
+      const { PK: _pk, SK: _sk, entityType: _entityType, ...session } = result.Attributes;
+      return threadReviewSessionSchema.parse(session);
+    } catch (error) {
+      if (isConditionalFailure(error)) {
+        return undefined;
+      }
+      throw error;
+    }
+  }
+
+  public async claimThreadAppeal(input: {
+    guildId: string;
+    sessionId: string;
+    ownerId: string;
+    channelId: string;
+    anchorMessageId: string;
+    now: string;
+    appealFromAt: string;
+    initialClaimedAt: string;
+    requestId: string;
+  }): Promise<ThreadReviewSession | undefined> {
+    try {
+      const result = await this.client.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
+          UpdateExpression:
+            'SET #state = :queued, claimedAt = :now, appealFromAt = :appealFromAt, initialClaimedAt = if_not_exists(initialClaimedAt, :initialClaimedAt), pendingAction = :appeal, pendingRequestId = :requestId',
+          ConditionExpression:
+            '#state = :finalized AND ownerId = :owner AND anchorMessageId = :anchor AND attribute_exists(threadId) AND (channelId = :channel OR threadId = :channel) AND (attribute_not_exists(appealsUsed) OR appealsUsed < :maxAppeals) AND (attribute_not_exists(lastProcessedRequestId) OR lastProcessedRequestId <> :requestId)',
+          ExpressionAttributeNames: { '#state': 'state' },
+          ExpressionAttributeValues: {
+            ':finalized': 'finalized',
+            ':queued': 'queued',
+            ':owner': input.ownerId,
+            ':channel': input.channelId,
+            ':anchor': input.anchorMessageId,
+            ':now': input.now,
+            ':appealFromAt': input.appealFromAt,
+            ':initialClaimedAt': input.initialClaimedAt,
+            ':appeal': 'appeal',
+            ':maxAppeals': 2,
+            ':requestId': input.requestId,
+          },
+          ReturnValues: 'ALL_NEW',
+        }),
+      );
+      if (!isRecord(result.Attributes)) {
+        throw new TypeError('Claimed thread appeal attributes are missing');
       }
       const { PK: _pk, SK: _sk, entityType: _entityType, ...session } = result.Attributes;
       return threadReviewSessionSchema.parse(session);
@@ -424,6 +547,30 @@ export class DynamoReviewRepository {
     await this.transitionThreadReview(input, 'draft', true);
   }
 
+  public async restoreThreadAppeal(input: {
+    guildId: string;
+    sessionId: string;
+    requestId: string;
+  }): Promise<void> {
+    await this.client.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
+        UpdateExpression:
+          'SET #state = :finalized, lastProcessedRequestId = :requestId REMOVE leaseUntil, claimedAt, appealFromAt, pendingAction, pendingRequestId',
+        ConditionExpression:
+          '#state = :judging AND pendingAction = :appeal AND pendingRequestId = :requestId',
+        ExpressionAttributeNames: { '#state': 'state' },
+        ExpressionAttributeValues: {
+          ':judging': 'judging',
+          ':finalized': 'finalized',
+          ':appeal': 'appeal',
+          ':requestId': input.requestId,
+        },
+      }),
+    );
+  }
+
   public async releaseThreadReview(input: { guildId: string; sessionId: string }): Promise<void> {
     await this.transitionThreadReview({ ...input, expectedState: 'judging' }, 'queued', false);
   }
@@ -441,7 +588,7 @@ export class DynamoReviewRepository {
       new UpdateCommand({
         TableName: this.tableName,
         Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
-        UpdateExpression: `SET #state = :next REMOVE leaseUntil${clearClaimedAt ? ', claimedAt' : ''}`,
+        UpdateExpression: `SET #state = :next REMOVE leaseUntil${clearClaimedAt ? ', claimedAt, initialClaimedAt, appealFromAt, pendingAction, pendingRequestId' : ''}`,
         ConditionExpression: '#state = :expected',
         ExpressionAttributeNames: { '#state': 'state' },
         ExpressionAttributeValues: {
@@ -506,6 +653,7 @@ export class DynamoReviewRepository {
       pointsDelta: pointsForOutcome(input.judgment.outcome, input.scorePolicy),
       finalizedAt: input.finalizedAt,
       reason: 'judgment',
+      revision: 0,
     };
     await this.finalize({
       guildId: input.guildId,
@@ -531,6 +679,7 @@ export class DynamoReviewRepository {
       pointsDelta: pointsForOutcome(input.judgment.outcome, input.scorePolicy),
       finalizedAt: input.finalizedAt,
       reason: 'judgment',
+      revision: 0,
     };
     await this.client.send(
       new TransactWriteCommand({
@@ -564,13 +713,126 @@ export class DynamoReviewRepository {
             Update: {
               TableName: this.tableName,
               Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
-              UpdateExpression: 'SET #state = :finalized REMOVE leaseUntil',
+              UpdateExpression:
+                'SET #state = :finalized, appealsUsed = if_not_exists(appealsUsed, :zero) REMOVE leaseUntil, pendingAction, appealFromAt',
               ConditionExpression: '#state = :judging AND ownerId = :owner',
               ExpressionAttributeNames: { '#state': 'state' },
               ExpressionAttributeValues: {
                 ':judging': 'judging',
                 ':finalized': 'finalized',
                 ':owner': input.userId,
+                ':zero': 0,
+              },
+            },
+          },
+        ],
+      }),
+    );
+  }
+
+  public async finalizeThreadAppeal(input: FinalizeThreadAppealInput): Promise<void> {
+    const nextStats = userStatsSchema.parse(
+      replaceStatsForJudgment(
+        input.stats,
+        input.previousVerdict.judgment,
+        input.judgment,
+        input.scorePolicy,
+      ),
+    );
+    const nextAppealsUsed = input.expectedAppealsUsed + 1;
+    const pointsDelta = pointsForOutcome(input.judgment.outcome, input.scorePolicy);
+    const verdict: VerdictRecord = {
+      PK: sessionPk(input.sessionId),
+      SK: verdictSk(input.userId),
+      entityType: 'Verdict',
+      sessionId: input.sessionId,
+      userId: input.userId,
+      judgment: input.judgment,
+      pointsDelta,
+      finalizedAt: input.finalizedAt,
+      reason: 'judgment',
+      revision: nextAppealsUsed,
+    };
+    const appeal: ThreadAppealRecord = {
+      PK: sessionPk(input.sessionId),
+      SK: appealSk(nextAppealsUsed),
+      entityType: 'ThreadAppeal',
+      sessionId: input.sessionId,
+      userId: input.userId,
+      appealNumber: nextAppealsUsed,
+      previousJudgment: input.previousVerdict.judgment,
+      judgment: input.judgment,
+      previousPointsDelta: input.previousVerdict.pointsDelta,
+      pointsDelta,
+      finalizedAt: input.finalizedAt,
+      expiresAt: input.expiresAt,
+    };
+    const expectedRevisionCondition =
+      input.previousVerdict.revision === 0
+        ? '(attribute_not_exists(revision) OR revision = :expectedRevision)'
+        : 'revision = :expectedRevision';
+    const expectedAppealsCondition =
+      input.expectedAppealsUsed === 0
+        ? '(attribute_not_exists(appealsUsed) OR appealsUsed = :expectedAppealsUsed)'
+        : 'appealsUsed = :expectedAppealsUsed';
+    await this.client.send(
+      new TransactWriteCommand({
+        TransactItems: [
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: appeal,
+              ConditionExpression: 'attribute_not_exists(PK) AND attribute_not_exists(SK)',
+            },
+          },
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: verdict,
+              ConditionExpression: `finalizedAt = :previousFinalizedAt AND ${expectedRevisionCondition}`,
+              ExpressionAttributeValues: {
+                ':previousFinalizedAt': input.previousVerdict.finalizedAt,
+                ':expectedRevision': input.previousVerdict.revision,
+              },
+            },
+          },
+          {
+            Put: {
+              TableName: this.tableName,
+              Item: {
+                PK: guildPk(input.guildId),
+                SK: userSk(input.userId),
+                entityType: 'UserStats',
+                guildId: input.guildId,
+                ...nextStats,
+              },
+              ConditionExpression:
+                'totalReviews = :totalReviews AND meaningfulReviews = :meaningfulReviews AND insufficientReviews = :insufficientReviews AND meaninglessReviews = :meaninglessReviews AND disciplinaryPoints = :disciplinaryPoints',
+              ExpressionAttributeValues: {
+                ':totalReviews': input.stats.totalReviews,
+                ':meaningfulReviews': input.stats.meaningfulReviews,
+                ':insufficientReviews': input.stats.insufficientReviews,
+                ':meaninglessReviews': input.stats.meaninglessReviews,
+                ':disciplinaryPoints': input.stats.disciplinaryPoints,
+              },
+            },
+          },
+          {
+            Update: {
+              TableName: this.tableName,
+              Key: { PK: guildPk(input.guildId), SK: sessionSk(input.sessionId) },
+              UpdateExpression:
+                'SET #state = :finalized, appealsUsed = :nextAppealsUsed, lastProcessedRequestId = :requestId REMOVE leaseUntil, claimedAt, appealFromAt, pendingAction, pendingRequestId',
+              ConditionExpression: `#state = :judging AND ownerId = :owner AND pendingAction = :appeal AND pendingRequestId = :requestId AND ${expectedAppealsCondition}`,
+              ExpressionAttributeNames: { '#state': 'state' },
+              ExpressionAttributeValues: {
+                ':judging': 'judging',
+                ':finalized': 'finalized',
+                ':owner': input.userId,
+                ':appeal': 'appeal',
+                ':expectedAppealsUsed': input.expectedAppealsUsed,
+                ':nextAppealsUsed': nextAppealsUsed,
+                ':requestId': input.requestId,
               },
             },
           },

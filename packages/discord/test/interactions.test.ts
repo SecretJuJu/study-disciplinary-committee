@@ -151,9 +151,15 @@ describe('review button parsing', () => {
         component({ id: 0, component_type: 2, custom_id: 'review_submit:1541459000000000002' }),
       ),
     ).toEqual({
+      action: 'initial',
       sessionId: '1541459000000000002',
       messageId: '1541459000000000001',
     });
+    expect(
+      parseReviewButton(
+        component({ id: 1, component_type: 2, custom_id: 'review_appeal:1541459000000000002' }),
+      ),
+    ).toMatchObject({ action: 'appeal', sessionId: '1541459000000000002' });
   });
 
   it('rejects wrong component types and unrelated or malformed controls', () => {

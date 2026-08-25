@@ -99,6 +99,7 @@ export type ParsedApplicationCommand =
   | { name: '내기록' };
 
 export type ParsedReviewButton = {
+  action: 'initial' | 'appeal';
   sessionId: string;
   messageId: string;
 };
@@ -169,7 +170,7 @@ const reviewButtonDataSchema = z
   .object({
     id: componentIdSchema.optional(),
     component_type: z.literal(2),
-    custom_id: z.string().regex(/^review_submit:\d{17,20}$/),
+    custom_id: z.string().regex(/^review_(?:submit|appeal):\d{17,20}$/),
   })
   .strict();
 
@@ -180,7 +181,8 @@ export function parseReviewButton(interaction: DiscordInteraction): ParsedReview
   const data = reviewButtonDataSchema.parse(interaction.data);
   const message = z.object({ id: snowflakeSchema }).passthrough().parse(interaction.message);
   return {
-    sessionId: data.custom_id.slice('review_submit:'.length),
+    action: data.custom_id.startsWith('review_appeal:') ? 'appeal' : 'initial',
+    sessionId: data.custom_id.slice(data.custom_id.indexOf(':') + 1),
     messageId: message.id,
   };
 }

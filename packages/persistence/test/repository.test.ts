@@ -484,6 +484,53 @@ describe('DynamoReviewRepository thread review state machine', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('claims an appeal only once per interaction request id', async () => {
+    const requestId = '1541459000000000010';
+    const { repository, commands } = repositoryWith({
+      response: {
+        Attributes: {
+          PK: `GUILD#${guildId}`,
+          SK: `SESSION#${sessionId}`,
+          entityType: 'ThreadReviewSession',
+          sessionId,
+          guildId,
+          ownerId: userId,
+          channelId: settings.submissionChannelId,
+          state: 'queued',
+          createdAt,
+          deadlineAt,
+          expiresAt,
+          configVersion: settings.configVersion,
+          anchorMessageId: '1541459000000000008',
+          threadId: '1541459000000000009',
+          claimedAt: createdAt,
+          initialClaimedAt: createdAt,
+          appealFromAt: createdAt,
+          pendingAction: 'appeal',
+          pendingRequestId: requestId,
+          appealsUsed: 0,
+        },
+      },
+    });
+
+    await expect(
+      repository.claimThreadAppeal({
+        guildId,
+        sessionId,
+        ownerId: userId,
+        channelId: settings.submissionChannelId,
+        anchorMessageId: '1541459000000000008',
+        now: createdAt,
+        appealFromAt: createdAt,
+        initialClaimedAt: createdAt,
+        requestId,
+      }),
+    ).resolves.toMatchObject({ pendingAction: 'appeal', pendingRequestId: requestId });
+    expect((commands[0] as UpdateCommand).input.ConditionExpression).toContain(
+      'lastProcessedRequestId <> :requestId',
+    );
+  });
+
   it('claims a queued job with a retry lease and parses the strict returned record', async () => {
     const { repository, commands } = repositoryWith({
       response: {
@@ -532,7 +579,7 @@ describe('DynamoReviewRepository thread review state machine', () => {
       'SET #state = :next REMOVE leaseUntil',
     );
     expect((commands[1] as UpdateCommand).input.UpdateExpression).toBe(
-      'SET #state = :next REMOVE leaseUntil, claimedAt',
+      'SET #state = :next REMOVE leaseUntil, claimedAt, initialClaimedAt, appealFromAt, pendingAction, pendingRequestId',
     );
   });
 
@@ -542,7 +589,8 @@ describe('DynamoReviewRepository thread review state machine', () => {
     await repository.cancelThreadReview({ guildId, sessionId });
 
     expect((commands[0] as UpdateCommand).input).toMatchObject({
-      UpdateExpression: 'SET #state = :next REMOVE leaseUntil, claimedAt',
+      UpdateExpression:
+        'SET #state = :next REMOVE leaseUntil, claimedAt, initialClaimedAt, appealFromAt, pendingAction, pendingRequestId',
       ConditionExpression: '#state = :expected',
       ExpressionAttributeValues: {
         ':expected': 'judging',
@@ -574,7 +622,57 @@ describe('DynamoReviewRepository thread review state machine', () => {
     expect(items?.[2]?.Update).toMatchObject({
       Key: { PK: `GUILD#${guildId}`, SK: `SESSION#${sessionId}` },
       ConditionExpression: '#state = :judging AND ownerId = :owner',
-      UpdateExpression: 'SET #state = :finalized REMOVE leaseUntil',
+      UpdateExpression:
+        'SET #state = :finalized, appealsUsed = if_not_exists(appealsUsed, :zero) REMOVE leaseUntil, pendingAction, appealFromAt',
     });
+  });
+
+  it('replaces the current verdict and stats while preserving an immutable appeal record', async () => {
+    const { repository, commands } = repositoryWith();
+    const previousJudgment = {
+      outcome: 'meaningful' as const,
+      rationale: '기존 근거',
+      verdictText: '기존 결론',
+      confidence: 'medium' as const,
+    };
+    await repository.finalizeThreadAppeal({
+      guildId,
+      sessionId,
+      userId,
+      stats: { ...initialStats, totalReviews: 1, meaningfulReviews: 1 },
+      previousVerdict: {
+        judgment: previousJudgment,
+        pointsDelta: 0,
+        finalizedAt: '2026-08-25T00:01:00.000Z',
+        revision: 0,
+      },
+      judgment: {
+        outcome: 'meaningless',
+        rationale: '새 자료를 반영한 근거',
+        verdictText: '항소 후 결론',
+        confidence: 'high',
+      },
+      scorePolicy: defaultScorePolicy,
+      finalizedAt: '2026-08-25T00:05:00.000Z',
+      expiresAt,
+      expectedAppealsUsed: 0,
+      requestId: '1541459000000000010',
+    });
+
+    const items = (commands[0] as TransactWriteCommand).input.TransactItems;
+    expect(items).toHaveLength(4);
+    expect(items?.[0]?.Put?.Item).toMatchObject({
+      SK: 'APPEAL#01',
+      appealNumber: 1,
+      previousJudgment,
+    });
+    expect(items?.[1]?.Put?.Item).toMatchObject({ SK: `VERDICT#${userId}`, revision: 1 });
+    expect(items?.[2]?.Put?.Item).toMatchObject({
+      totalReviews: 1,
+      meaningfulReviews: 0,
+      meaninglessReviews: 1,
+      disciplinaryPoints: defaultScorePolicy.meaningless,
+    });
+    expect(items?.[3]?.Update?.UpdateExpression).toContain('appealsUsed = :nextAppealsUsed');
   });
 });

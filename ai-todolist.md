@@ -142,6 +142,23 @@ created_at: 2026-08-25T00:25:00+09:00
 - [x] interaction Lambda는 secret-free를 유지하고, 기존 SQS/Judge Lambda만 사용하며 필요한 IAM만 최소 추가한다.
 - [x] 관련 코드·스크립트·문서·테스트가 새 흐름과 일치하고 `pnpm build && pnpm check`가 통과한다.
 
+### Task 8: 스레드 항소와 판결 교정
+
+**Status:** completed
+
+#### Subtasks
+
+- [x] **8.1** 판결 anchor에 남은 횟수를 포함한 소유자 전용 항소 버튼을 제공하고, 최대 2회의 반박·참여자 보증을 비동기 재심해 현재 판결과 통계를 원자적으로 교정하며 항소 이력을 보존한다.
+
+#### Acceptance Criteria
+
+- [x] 최초 판결 메시지는 최종 결론, 남은 항소 횟수, 항소 버튼만 표시한다.
+- [x] 항소는 직전 판결 뒤부터 클릭 시점까지의 새 메시지만 사용하고 소유자 반박이 없으면 횟수를 소진하지 않는다.
+- [x] 다른 사람의 일반 메시지는 익명화된 참고·보증 진술로 AI에 전달하며, 지시문이나 다수 의견만으로 판정을 바꾸지 않는다.
+- [x] 항소는 최대 2회이고 중복 SQS/버튼 전달로 횟수·AI·통계가 중복 반영되지 않는다.
+- [x] 현재 verdict와 `/내기록`의 판정별 횟수·징계 점수는 같은 transaction에서 교정되고 이전 판정은 immutable appeal record로 남는다.
+- [x] 관련 문서와 최소 회귀 테스트가 갱신되고 `pnpm build && pnpm check`가 통과한다.
+
 ## Final Checklist
 
 - [ ] All tasks completed
@@ -152,6 +169,7 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ## Execution Notes
 
+- 2026-08-25 13:21 KST: Task 8 로컬 구현 완료. 최종 anchor는 결론·남은 항소 횟수·항소 버튼만 표시하고, 소유자 반박이 있는 경우에만 직전 판결 이후 메시지를 snapshot해 기존 Judge SQS/Lambda에서 재심한다. 참여자 ID·mention은 익명화하고 보증은 참고 진술로만 취급한다. 성공한 항소만 최대 2회 차감하며 current verdict, 판정별 통계, 징계 점수, immutable 항소 record를 단일 DynamoDB transaction으로 갱신한다. 중복 interaction/SQS는 request ID, session state, lease, verdict revision 조건으로 억제하고, 항소 claim 경쟁에서 진 worker는 current verdict를 재조회해 stale anchor overwrite를 막는다. 새 회귀 테스트는 핵심 경로만 추가했고 `pnpm build && pnpm check`에서 16개 파일 118개 테스트와 build/format/ESLint/strict typecheck가 통과했다. credential pattern은 0건이며 실제 과금 항소 QA는 수행하지 않았다.
 - 2026-08-25 11:40 KST: 최종 pre-commit review 보정을 기록했다. 접수 뒤 guild 설정이 변경되면 회차를 `cancelled`로 조건부 전이하고, anchor 수정이 일시 실패해 SQS가 재전달되어도 저장 상태에서 동일한 취소 안내를 deterministic하게 복구한다. Discord public thread 생성은 권한 부족 HTTP 403만 비재시도 setup 결과로 바꿔 명시적인 권한 안내를 게시하며, HTTP 400/404는 이미 thread가 만들어진 race인지 GET으로 재확인한 뒤 없으면 원래 오류를 유지해 재시도한다. 보정 관련 narrow 테스트 47개가 통과한 뒤 Root가 `pnpm build && pnpm check`를 재실행해 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. 추가 안전 검사도 `credential_pattern_hits=0`, `tracked_env_files=0`, `interaction_secret_markers=0`, cached diff check 통과로 확인했다. 이 기록 단계에서는 코드·stage·commit·push·deploy를 수행하지 않았다.
 - 2026-08-25 11:14 KST: Task 7 완료. `/심사`를 옵션 없는 공개 접수로 바꾸고 prepare(1초 지연)와 judge-thread discriminated SQS job을 기존 Judge Lambda에 연결했다. signed component는 guild·owner·anchor·thread/channel·configVersion·deadline을 검증하고 `draft → queued`를 조건부 claim한다. worker는 8분 lease로 중복 AI를 억제한다. Discord timestamp는 UTC `Z`와 유효한 offset을 허용한다. thread는 최대 5페이지·500개까지만 bounded pagination으로 조회하고, 버튼 시각 이전 소유자의 최신 type 0 non-bot 텍스트 최대 100개를 오래된 순으로 정렬해 Unicode 6,000자로 snapshot한다. 재시도 release는 `claimedAt`을 보존하고 실제 reopen만 제거해 버튼 시각 경계를 유지한다. 빈 제출/크레딧 소진은 draft와 버튼을 복구하고, 판결·안전 실패는 bot REST로 stable anchor를 수정한다. 판결·통계·session finalized는 단일 transaction이다. Discord 점검에 Read Message History/Create Public Threads/Send Messages in Threads와 Message Content Intent를 추가했고 IAM은 두 함수의 DynamoDB UpdateItem만 확장했다. 현재 production은 debug 채널과 submission 채널이 동일하다는 전제로 권한 smoke check를 수행한다. 최초 검증 16개 파일 103개 테스트 이후 Root review 보정까지 포함한 최종 검증은 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. credential pattern, tracked env file, interaction secret marker는 각각 0건이고 cached diff check도 통과했다. 외부 Discord command 등록·AWS 배포·production 수동 QA는 이 Task 범위에서 수행하지 않았다.
 - 2026-08-25 10:47 KST: Task 6 기존 구현을 재검증했다. `credit_balance_exhausted`는 `NonRetryableModelError`와 `ai_credit_exhausted` 안전 진단으로 변환되고, Judge가 Discord 원본 응답을 충전 후 새 `/심사` 안내로 수정한 뒤 정상 반환하므로 성공 경로에서는 SQS partial batch failure가 생성되지 않는다. 대상 테스트 4개 파일 29개와 `pnpm build && pnpm check`의 전체 15개 파일 81개 테스트가 통과했다. 커밋 `493c116`의 CI `32794297155`와 Deploy `32794297152`가 성공했고, 배포 단계의 check/build/Pulumi/Discord 등록·검증도 모두 성공했다. AWS에서 Judge Lambda Node 24/Active/업데이트 성공, event source Enabled·batch size 1·partial batch response, judge queue 0건을 확인했다. DLQ에는 수정 전 실패로 보이는 기존 3건이 남아 있으며 이번 검증에서는 삭제하거나 본문을 조회하지 않았다.

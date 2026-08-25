@@ -1,7 +1,10 @@
-import { parseJudgment, judgeRequest } from '@disciplinary-committee/ai-judge';
+import { appealRequest, parseJudgment, judgeRequest } from '@disciplinary-committee/ai-judge';
+import { pointsForOutcome } from '@disciplinary-committee/domain';
 import type { GuildSettings, Judgment, UserStats } from '@disciplinary-committee/domain';
 import { diagnosticForFailure } from '@disciplinary-committee/domain';
 import type {
+  CurrentThreadVerdict,
+  FinalizeThreadAppealInput,
   FinalizeThreadJudgmentInput,
   ThreadReviewSession,
 } from '@disciplinary-committee/persistence';
@@ -70,6 +73,17 @@ export type ThreadReviewRepository = {
     anchorMessageId: string;
     now: string;
   }): Promise<ThreadReviewSession | undefined>;
+  claimThreadAppeal(input: {
+    guildId: string;
+    sessionId: string;
+    ownerId: string;
+    channelId: string;
+    anchorMessageId: string;
+    now: string;
+    appealFromAt: string;
+    initialClaimedAt: string;
+    requestId: string;
+  }): Promise<ThreadReviewSession | undefined>;
   claimThreadReviewForJudging(input: {
     guildId: string;
     sessionId: string;
@@ -81,12 +95,18 @@ export type ThreadReviewRepository = {
     sessionId: string;
     expectedState: 'queued' | 'judging';
   }): Promise<void>;
+  restoreThreadAppeal(input: {
+    guildId: string;
+    sessionId: string;
+    requestId: string;
+  }): Promise<void>;
   releaseThreadReview(input: { guildId: string; sessionId: string }): Promise<void>;
   cancelThreadReview(input: { guildId: string; sessionId: string }): Promise<void>;
   getGuildSettings(guildId: string): Promise<GuildSettings | undefined>;
   getUserStats(guildId: string, userId: string): Promise<UserStats | undefined>;
-  getFinalizedJudgment(sessionId: string, userId: string): Promise<Judgment | undefined>;
+  getThreadVerdict(sessionId: string, userId: string): Promise<CurrentThreadVerdict | undefined>;
   finalizeThreadJudgment(input: FinalizeThreadJudgmentInput): Promise<void>;
+  finalizeThreadAppeal(input: FinalizeThreadAppealInput): Promise<void>;
 };
 
 export function reviewButtonComponents(sessionId: string): readonly unknown[] {
@@ -106,8 +126,33 @@ export function reviewButtonComponents(sessionId: string): readonly unknown[] {
   ];
 }
 
+export function appealButtonComponents(sessionId: string, appealsUsed: number): readonly unknown[] {
+  const remaining = Math.max(0, 2 - appealsUsed);
+  if (remaining === 0) {
+    return [];
+  }
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 2,
+          label: `항소 · 남은 ${remaining}회`,
+          emoji: { name: '📣' },
+          custom_id: `review_appeal:${sessionId}`,
+        },
+      ],
+    },
+  ];
+}
+
 function limitCharacters(value: string, limit: number): string {
   return Array.from(value).slice(0, limit).join('');
+}
+
+function redactDiscordReferences(value: string): string {
+  return value.replace(/<(?:@!?|@&|#)\d{17,20}>/g, '@Discord참조');
 }
 
 export function snapshotOwnerMessages(
@@ -132,9 +177,71 @@ export function snapshotOwnerMessages(
         : timeDifference;
     })
     .slice(-reviewMessageLimit)
-    .map((message) => message.content.trim())
+    .map((message) => redactDiscordReferences(message.content.trim()))
     .join('\n\n');
   return limitCharacters(content, reviewSnapshotCharacterLimit).trim();
+}
+
+export type AppealSnapshot = {
+  originalSubmission: string;
+  appealEvidence: string;
+  hasOwnerRebuttal: boolean;
+};
+
+export function snapshotAppealMessages(
+  messages: readonly DiscordThreadMessage[],
+  ownerId: string,
+  initialClaimedAt: string,
+  appealFromAt: string,
+  claimedAt: string,
+): AppealSnapshot {
+  const sorted = messages
+    .filter(
+      (message) =>
+        message.type === 0 &&
+        message.author.bot !== true &&
+        message.content.trim().length > 0 &&
+        Date.parse(message.timestamp) <= Date.parse(claimedAt),
+    )
+    .toSorted((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
+  const originalSubmission = limitCharacters(
+    sorted
+      .filter(
+        (message) =>
+          message.author.id === ownerId &&
+          Date.parse(message.timestamp) <= Date.parse(initialClaimedAt),
+      )
+      .slice(-reviewMessageLimit)
+      .map((message) => redactDiscordReferences(message.content.trim()))
+      .join('\n\n'),
+    reviewSnapshotCharacterLimit / 2,
+  ).trim();
+  const appealMessages = sorted
+    .filter((message) => Date.parse(message.timestamp) > Date.parse(appealFromAt))
+    .slice(-reviewMessageLimit);
+  const participantNumbers = new Map<string, number>();
+  const ownerRebuttals = appealMessages
+    .filter((message) => message.author.id === ownerId)
+    .map((message) => `[제출자 반박] ${redactDiscordReferences(message.content.trim())}`);
+  const participantEvidence = appealMessages
+    .filter((message) => message.author.id !== ownerId)
+    .map((message) => {
+      const number = participantNumbers.get(message.author.id) ?? participantNumbers.size + 1;
+      participantNumbers.set(message.author.id, number);
+      return `[참여자 ${number} 참고 진술] ${redactDiscordReferences(message.content.trim())}`;
+    });
+  const appealEvidence = [
+    limitCharacters(ownerRebuttals.join('\n\n'), 1_800),
+    limitCharacters(participantEvidence.join('\n\n'), 1_200),
+  ]
+    .filter((value) => value.length > 0)
+    .join('\n\n')
+    .trim();
+  return {
+    originalSubmission,
+    appealEvidence,
+    hasOwnerRebuttal: ownerRebuttals.length > 0,
+  };
 }
 
 function draftContent(session: ThreadReviewSession, note?: string): string {
@@ -148,13 +255,22 @@ function draftContent(session: ThreadReviewSession, note?: string): string {
     .join('\n');
 }
 
-function finalContent(judgment: Judgment): string {
-  return ['**심사 결과**', judgment.verdictText, '', `판정 근거: ${judgment.rationale}`].join('\n');
+function finalContent(judgment: Judgment, appealsUsed: number, note?: string): string {
+  return [
+    '**최종 결론**',
+    judgment.verdictText,
+    '',
+    `남은 항소: ${Math.max(0, 2 - appealsUsed)}회`,
+    note,
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join('\n');
 }
 
 const cancelledContent =
   '서버 심사 설정이 접수 후 변경되어 이 요청을 취소했습니다. 현재 설정된 제출 채널에서 새 `/심사`를 실행해주세요.';
 const judgingContent = '**심사 중**\n스레드의 현재 학습 내용을 확인하고 있습니다.';
+const appealJudgingContent = '**항소 심사 중**\n새 반박과 참여자 참고 진술을 확인하고 있습니다.';
 
 function initialStats(userId: string): UserStats {
   return {
@@ -199,14 +315,37 @@ export class ThreadReviewWorker {
   }
 
   private async requestReview(job: RequestReviewJob, now: Date): Promise<void> {
-    const claimed = await this.repository.claimThreadReview({
-      guildId: job.guildId,
-      sessionId: job.sessionId,
-      ownerId: job.userId,
-      channelId: job.channelId,
-      anchorMessageId: job.anchorMessageId,
-      now: job.requestedAt,
-    });
+    const requestId = job.requestId ?? job.sessionId;
+    let claimed: ThreadReviewSession | undefined;
+    if (job.action === 'appeal') {
+      const [existing, verdict] = await Promise.all([
+        this.repository.getThreadReview(job.guildId, job.sessionId),
+        this.repository.getThreadVerdict(job.sessionId, job.userId),
+      ]);
+      if (existing === undefined || verdict === undefined) {
+        return;
+      }
+      claimed = await this.repository.claimThreadAppeal({
+        guildId: job.guildId,
+        sessionId: job.sessionId,
+        ownerId: job.userId,
+        channelId: job.channelId,
+        anchorMessageId: job.anchorMessageId,
+        now: job.requestedAt,
+        appealFromAt: verdict.finalizedAt,
+        initialClaimedAt: existing.initialClaimedAt ?? existing.claimedAt ?? verdict.finalizedAt,
+        requestId,
+      });
+    } else {
+      claimed = await this.repository.claimThreadReview({
+        guildId: job.guildId,
+        sessionId: job.sessionId,
+        ownerId: job.userId,
+        channelId: job.channelId,
+        anchorMessageId: job.anchorMessageId,
+        now: job.requestedAt,
+      });
+    }
     const session = claimed ?? (await this.repository.getThreadReview(job.guildId, job.sessionId));
     if (
       session === undefined ||
@@ -217,7 +356,26 @@ export class ThreadReviewWorker {
     ) {
       return;
     }
-    if (session.state === 'draft') {
+    if (session.state === 'finalized') {
+      // A competing worker may have finalized an appeal after the pre-claim read.
+      // Re-read before rendering so a late delivery cannot restore a stale verdict.
+      const verdict = await this.repository.getThreadVerdict(session.sessionId, session.ownerId);
+      if (verdict !== undefined) {
+        const appealsUsed = session.appealsUsed ?? verdict.revision;
+        await this.discord.editChannelMessage({
+          channelId: session.channelId,
+          messageId: job.anchorMessageId,
+          content: finalContent(verdict.judgment, appealsUsed),
+          components: appealButtonComponents(session.sessionId, appealsUsed),
+        });
+      }
+      return;
+    }
+    if (
+      session.state === 'draft' ||
+      session.state === 'cancelled' ||
+      (session.pendingAction !== undefined && session.pendingAction !== job.action)
+    ) {
       return;
     }
 
@@ -225,7 +383,7 @@ export class ThreadReviewWorker {
       await this.discord.editChannelMessage({
         channelId: session.channelId,
         messageId: session.anchorMessageId,
-        content: judgingContent,
+        content: job.action === 'appeal' ? appealJudgingContent : judgingContent,
         components: [],
       });
     }
@@ -315,17 +473,18 @@ export class ThreadReviewWorker {
     });
     if (session === undefined) {
       const existing = await this.repository.getThreadReview(job.guildId, job.sessionId);
-      const verdict = await this.repository.getFinalizedJudgment(job.sessionId, job.userId);
+      const verdict = await this.repository.getThreadVerdict(job.sessionId, job.userId);
       if (
         existing?.state === 'finalized' &&
         existing.anchorMessageId !== undefined &&
         verdict !== undefined
       ) {
+        const appealsUsed = existing.appealsUsed ?? verdict.revision;
         await this.discord.editChannelMessage({
           channelId: existing.channelId,
           messageId: existing.anchorMessageId,
-          content: finalContent(verdict),
-          components: [],
+          content: finalContent(verdict.judgment, appealsUsed),
+          components: appealButtonComponents(existing.sessionId, appealsUsed),
         });
       } else if (
         existing?.state === 'draft' &&
@@ -357,6 +516,7 @@ export class ThreadReviewWorker {
       throw new TypeError('Claimed thread review is not fully bound');
     }
 
+    let appealVerdict: CurrentThreadVerdict | undefined;
     try {
       const settings = await this.repository.getGuildSettings(job.guildId);
       if (
@@ -377,64 +537,144 @@ export class ThreadReviewWorker {
         });
         return;
       }
-      const snapshot = snapshotOwnerMessages(
-        await this.discord.listThreadMessages(session.threadId),
-        session.ownerId,
-        session.claimedAt,
-      );
-      if (snapshot.length === 0) {
-        await this.repository.reopenThreadReview({
-          guildId: session.guildId,
-          sessionId: session.sessionId,
-          expectedState: 'judging',
-        });
-        await this.discord.editChannelMessage({
-          channelId: session.channelId,
-          messageId: session.anchorMessageId,
-          content: draftContent(
-            session,
-            '⚠️ 심사할 텍스트가 없습니다. 내용을 작성한 뒤 다시 눌러주세요.',
-          ),
-          components: reviewButtonComponents(session.sessionId),
-        });
-        return;
-      }
-
+      const messages = await this.discord.listThreadMessages(session.threadId);
       const currentStats =
         (await this.repository.getUserStats(job.guildId, job.userId)) ?? initialStats(job.userId);
-      const response = await this.model.create(
-        judgeRequest({
+      const isAppeal = session.pendingAction === 'appeal';
+      let modelRequest: Parameters<ModelClient['create']>[0];
+      if (isAppeal) {
+        if (
+          session.claimedAt === undefined ||
+          session.initialClaimedAt === undefined ||
+          session.appealFromAt === undefined ||
+          session.pendingRequestId === undefined
+        ) {
+          throw new TypeError('Claimed thread appeal is missing snapshot boundaries');
+        }
+        appealVerdict = await this.repository.getThreadVerdict(session.sessionId, session.ownerId);
+        const appealsUsed = session.appealsUsed ?? appealVerdict?.revision ?? 0;
+        if (appealVerdict === undefined || appealVerdict.revision !== appealsUsed) {
+          throw new TypeError('Claimed thread appeal verdict revision is stale');
+        }
+        const snapshot = snapshotAppealMessages(
+          messages,
+          session.ownerId,
+          session.initialClaimedAt,
+          session.appealFromAt,
+          session.claimedAt,
+        );
+        if (!snapshot.hasOwnerRebuttal) {
+          await this.repository.restoreThreadAppeal({
+            guildId: session.guildId,
+            sessionId: session.sessionId,
+            requestId: session.pendingRequestId,
+          });
+          await this.discord.editChannelMessage({
+            channelId: session.channelId,
+            messageId: session.anchorMessageId,
+            content: finalContent(
+              appealVerdict.judgment,
+              appealsUsed,
+              '⚠️ 직전 판결 뒤에 본인의 반박을 먼저 작성해주세요. 항소 횟수는 차감되지 않았습니다.',
+            ),
+            components: appealButtonComponents(session.sessionId, appealsUsed),
+          });
+          return;
+        }
+        modelRequest = appealRequest({
+          originalSubmission:
+            snapshot.originalSubmission.length === 0
+              ? '확인 가능한 최초 제출 텍스트가 없습니다.'
+              : snapshot.originalSubmission,
+          appealEvidence: snapshot.appealEvidence,
+          previousJudgment: appealVerdict.judgment,
+          disciplinaryPoints: currentStats.disciplinaryPoints,
+        });
+      } else {
+        const snapshot = snapshotOwnerMessages(messages, session.ownerId, session.claimedAt);
+        if (snapshot.length === 0) {
+          await this.repository.reopenThreadReview({
+            guildId: session.guildId,
+            sessionId: session.sessionId,
+            expectedState: 'judging',
+          });
+          await this.discord.editChannelMessage({
+            channelId: session.channelId,
+            messageId: session.anchorMessageId,
+            content: draftContent(
+              session,
+              '⚠️ 심사할 텍스트가 없습니다. 내용을 작성한 뒤 다시 눌러주세요.',
+            ),
+            components: reviewButtonComponents(session.sessionId),
+          });
+          return;
+        }
+        modelRequest = judgeRequest({
           submission: { whatStudied: snapshot },
           disciplinaryPoints: currentStats.disciplinaryPoints,
-        }),
-      );
+        });
+      }
+      const response = await this.model.create(modelRequest);
       let judgment: Judgment;
       try {
         judgment = parseJudgment(response.outputText);
       } catch (error) {
         throw new RetryableModelError('ai_output_invalid', { cause: error });
       }
-      const finalized = await this.finalize(session, settings, currentStats, judgment, nowIso);
+      const finalized =
+        appealVerdict === undefined
+          ? await this.finalizeInitial(session, settings, currentStats, judgment, nowIso)
+          : await this.finalizeAppeal(
+              session,
+              settings,
+              currentStats,
+              appealVerdict,
+              judgment,
+              nowIso,
+            );
       await this.discord.editChannelMessage({
         channelId: session.channelId,
         messageId: session.anchorMessageId,
-        content: finalContent(finalized),
-        components: [],
+        content: finalContent(finalized.judgment, finalized.revision),
+        components: appealButtonComponents(session.sessionId, finalized.revision),
       });
     } catch (error) {
       if (error instanceof NonRetryableModelError) {
         await this.reportFailure(error, session.sessionId);
-        await this.repository.reopenThreadReview({
-          guildId: session.guildId,
-          sessionId: session.sessionId,
-          expectedState: 'judging',
-        });
-        await this.discord.editChannelMessage({
-          channelId: session.channelId,
-          messageId: session.anchorMessageId,
-          content: `${creditExhaustedMessage}\n기존 스레드 내용은 유지됩니다. 충전 후 다시 요청하세요.`,
-          components: reviewButtonComponents(session.sessionId),
-        });
+        if (
+          session.pendingAction === 'appeal' &&
+          session.pendingRequestId !== undefined &&
+          appealVerdict !== undefined
+        ) {
+          const appealsUsed = session.appealsUsed ?? appealVerdict.revision;
+          await this.repository.restoreThreadAppeal({
+            guildId: session.guildId,
+            sessionId: session.sessionId,
+            requestId: session.pendingRequestId,
+          });
+          await this.discord.editChannelMessage({
+            channelId: session.channelId,
+            messageId: session.anchorMessageId,
+            content: finalContent(
+              appealVerdict.judgment,
+              appealsUsed,
+              `${creditExhaustedMessage} 충전 후 같은 항소 버튼을 다시 누르세요. 횟수는 차감되지 않았습니다.`,
+            ),
+            components: appealButtonComponents(session.sessionId, appealsUsed),
+          });
+        } else {
+          await this.repository.reopenThreadReview({
+            guildId: session.guildId,
+            sessionId: session.sessionId,
+            expectedState: 'judging',
+          });
+          await this.discord.editChannelMessage({
+            channelId: session.channelId,
+            messageId: session.anchorMessageId,
+            content: `${creditExhaustedMessage}\n기존 스레드 내용은 유지됩니다. 충전 후 다시 요청하세요.`,
+            components: reviewButtonComponents(session.sessionId),
+          });
+        }
         return;
       }
       await this.releaseSafely(session);
@@ -452,13 +692,13 @@ export class ThreadReviewWorker {
     }
   }
 
-  private async finalize(
+  private async finalizeInitial(
     session: ThreadReviewSession,
     settings: GuildSettings,
     stats: UserStats,
     judgment: Judgment,
     finalizedAt: string,
-  ): Promise<Judgment> {
+  ): Promise<CurrentThreadVerdict> {
     const persist = (currentStats: UserStats): Promise<void> =>
       this.repository.finalizeThreadJudgment({
         guildId: session.guildId,
@@ -471,15 +711,17 @@ export class ThreadReviewWorker {
       });
     try {
       await persist(stats);
-      return judgment;
+      return {
+        judgment,
+        pointsDelta: pointsForOutcome(judgment.outcome, settings.scorePolicy),
+        finalizedAt,
+        revision: 0,
+      };
     } catch (error) {
       if (!isTransactionConflict(error)) {
         throw error;
       }
-      const existing = await this.repository.getFinalizedJudgment(
-        session.sessionId,
-        session.ownerId,
-      );
+      const existing = await this.repository.getThreadVerdict(session.sessionId, session.ownerId);
       if (existing !== undefined) {
         return existing;
       }
@@ -488,8 +730,64 @@ export class ThreadReviewWorker {
         throw error;
       }
       await persist(refreshed);
-      return judgment;
+      return {
+        judgment,
+        pointsDelta: pointsForOutcome(judgment.outcome, settings.scorePolicy),
+        finalizedAt,
+        revision: 0,
+      };
     }
+  }
+
+  private async finalizeAppeal(
+    session: ThreadReviewSession,
+    settings: GuildSettings,
+    stats: UserStats,
+    previousVerdict: CurrentThreadVerdict,
+    judgment: Judgment,
+    finalizedAt: string,
+  ): Promise<CurrentThreadVerdict> {
+    const expectedAppealsUsed = session.appealsUsed ?? previousVerdict.revision;
+    const requestId = session.pendingRequestId;
+    if (requestId === undefined) {
+      throw new TypeError('Claimed thread appeal request id is missing');
+    }
+    const persist = (currentStats: UserStats): Promise<void> =>
+      this.repository.finalizeThreadAppeal({
+        guildId: session.guildId,
+        sessionId: session.sessionId,
+        userId: session.ownerId,
+        stats: currentStats,
+        previousVerdict,
+        judgment,
+        scorePolicy: settings.scorePolicy,
+        finalizedAt,
+        expiresAt: session.expiresAt,
+        expectedAppealsUsed,
+        requestId,
+      });
+    try {
+      await persist(stats);
+    } catch (error) {
+      if (!isTransactionConflict(error)) {
+        throw error;
+      }
+      const existing = await this.repository.getThreadVerdict(session.sessionId, session.ownerId);
+      if (existing !== undefined && existing.revision > previousVerdict.revision) {
+        return existing;
+      }
+      const refreshed = await this.repository.getUserStats(session.guildId, session.ownerId);
+      if (refreshed === undefined) {
+        throw error;
+      }
+      await persist(refreshed);
+    }
+    return {
+      judgment,
+      pointsDelta: pointsForOutcome(judgment.outcome, settings.scorePolicy),
+      finalizedAt,
+      revision: expectedAppealsUsed + 1,
+    };
   }
 
   private async releaseSafely(session: ThreadReviewSession): Promise<void> {

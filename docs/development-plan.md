@@ -79,6 +79,7 @@ updated_at: 2026-08-24T12:16:00Z
 - 2026-08-24: 관리자 AWS CLI profile로 한 번 실행하는 bootstrap, `master` 전용 GitHub OIDC deploy role, private S3 Pulumi backend, GitHub Actions 변수·시크릿 설정, 자동 Pulumi/Discord 배포 workflow를 추가했다. 스크립트와 workflow는 작성·로컬 검증만 하며 AWS/GitHub/Discord 외부 변경은 실행하지 않았다.
 - 2026-08-25: AWS/GitHub bootstrap과 production 배포를 실행했다. GitHub OIDC의 불변 owner/repository ID subject, API Gateway 태그, Pulumi Lambda 상태 조회 권한을 최소 범위로 보완했고 Node.js 24 Lambda를 CommonJS로 번들링했다. Actions run `32743671582`에서 Pulumi 배포와 Discord endpoint·guild command 동기화가 성공했다.
 - 2026-08-25: `/심사`를 옵션 입력에서 public thread·소유자 버튼 흐름으로 바꿨다. 현재 thread snapshot만 최대 100개·6,000자로 제한하고 기존 SQS/Judge Lambda를 재사용한다. 외부 Discord 등록과 production 배포는 별도 배포 단계에서 검증한다.
+- 2026-08-25: 판결 anchor에 최대 2회의 항소 흐름을 추가했다. 항소는 직전 판결 뒤 본인 반박과 익명화한 참여자 참고 진술만 재심하고, 현재 verdict·판정별 통계·징계 점수를 transaction으로 교정하면서 이전 판정은 회차 TTL의 감사 record로 보존한다. production 배포와 실제 과금 항소 QA는 별도 승인 단계다.
 
 ## Completion Checklist
 

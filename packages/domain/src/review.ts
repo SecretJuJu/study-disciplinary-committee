@@ -58,6 +58,29 @@ export function updateStatsForJudgment(
   };
 }
 
+export function replaceStatsForJudgment(
+  stats: UserStats,
+  previous: Judgment,
+  next: Judgment,
+  scorePolicy: ScorePolicy,
+): UserStats {
+  const outcomeDelta = (outcome: ReviewOutcome): number =>
+    Number(next.outcome === outcome) - Number(previous.outcome === outcome);
+  return {
+    ...stats,
+    meaningfulReviews: stats.meaningfulReviews + outcomeDelta('meaningful'),
+    insufficientReviews: stats.insufficientReviews + outcomeDelta('insufficient'),
+    meaninglessReviews: stats.meaninglessReviews + outcomeDelta('meaningless'),
+    disciplinaryPoints:
+      stats.disciplinaryPoints -
+      pointsForOutcome(previous.outcome, scorePolicy) +
+      pointsForOutcome(next.outcome, scorePolicy),
+    // 항소는 새 심사 회차가 아니므로 생존 연속 기록은 새로 증가시키지 않는다.
+    currentSurvivalStreak: stats.currentSurvivalStreak,
+    bestSurvivalStreak: stats.bestSurvivalStreak,
+  };
+}
+
 export function updateStatsForAbsence(stats: UserStats, scorePolicy: ScorePolicy): UserStats {
   return {
     ...stats,

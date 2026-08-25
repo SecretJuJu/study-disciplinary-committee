@@ -4,7 +4,10 @@ import {
   type Judgment,
   type UserStats,
 } from '@disciplinary-committee/domain';
-import type { ThreadReviewSession } from '@disciplinary-committee/persistence';
+import type {
+  CurrentThreadVerdict,
+  ThreadReviewSession,
+} from '@disciplinary-committee/persistence';
 import { describe, expect, it, vi } from 'vitest';
 
 import { NonRetryableModelError } from '../src/model-errors.js';
@@ -12,6 +15,7 @@ import type { ModelClient } from '../src/judge.js';
 import type { JudgeThreadJob, PrepareReviewJob, RequestReviewJob } from '../src/review-jobs.js';
 import {
   reviewSnapshotCharacterLimit,
+  snapshotAppealMessages,
   snapshotOwnerMessages,
   ThreadReviewWorker,
   type DiscordThreadClient,
@@ -76,6 +80,13 @@ const judgment: Judgment = {
   confidence: 'high',
 };
 
+const currentVerdict: CurrentThreadVerdict = {
+  judgment,
+  pointsDelta: 0,
+  finalizedAt: fixedNow.toISOString(),
+  revision: 0,
+};
+
 const judgeJob: JudgeThreadJob = { kind: 'judge_thread', guildId, sessionId, userId: ownerId };
 
 function message(input: Partial<DiscordThreadMessage> & { content: string }): DiscordThreadMessage {
@@ -97,14 +108,17 @@ function repository(overrides: Partial<ThreadReviewRepository> = {}): ThreadRevi
       state: 'queued',
       claimedAt: fixedNow.toISOString(),
     }),
+    claimThreadAppeal: async () => undefined,
     claimThreadReviewForJudging: async () => session,
     reopenThreadReview: async () => undefined,
+    restoreThreadAppeal: async () => undefined,
     releaseThreadReview: async () => undefined,
     cancelThreadReview: async () => undefined,
     getGuildSettings: async () => settings,
     getUserStats: async () => stats,
-    getFinalizedJudgment: async () => undefined,
+    getThreadVerdict: async () => undefined,
     finalizeThreadJudgment: async () => undefined,
+    finalizeThreadAppeal: async () => undefined,
     ...overrides,
   };
 }
@@ -187,6 +201,32 @@ describe('owner message snapshot', () => {
     ];
 
     expect(snapshotOwnerMessages(messages, ownerId)).toBe('소유자 학습 내용');
+  });
+
+  it('separates an owner rebuttal from anonymized participant appeal evidence', () => {
+    const snapshot = snapshotAppealMessages(
+      [
+        message({ content: '최초 학습 내용', timestamp: '2026-08-24T23:55:00.000Z' }),
+        message({ content: '반박 자료', timestamp: '2026-08-25T00:01:00.000Z' }),
+        message({
+          content: '함께 공부한 것을 보증합니다.',
+          timestamp: '2026-08-25T00:02:00.000Z',
+          author: { id: '1541459000000000099' },
+        }),
+      ],
+      ownerId,
+      '2026-08-25T00:00:00.000Z',
+      '2026-08-25T00:00:30.000Z',
+      '2026-08-25T00:03:00.000Z',
+    );
+
+    expect(snapshot).toMatchObject({
+      originalSubmission: '최초 학습 내용',
+      hasOwnerRebuttal: true,
+    });
+    expect(snapshot.appealEvidence).toContain('[제출자 반박] 반박 자료');
+    expect(snapshot.appealEvidence).toContain('[참여자 1 참고 진술]');
+    expect(snapshot.appealEvidence).not.toContain('1541459000000000099');
   });
 });
 
@@ -286,6 +326,8 @@ describe('ThreadReviewWorker', () => {
     const requestedAt = fixedNow.toISOString();
     const requestJob: RequestReviewJob = {
       kind: 'request_review',
+      action: 'initial',
+      requestId: '1541459000000000010',
       guildId,
       sessionId,
       userId: ownerId,
@@ -338,6 +380,8 @@ describe('ThreadReviewWorker', () => {
     await worker.process(
       {
         kind: 'request_review',
+        action: 'initial',
+        requestId: '1541459000000000010',
         guildId,
         sessionId,
         userId: attackerId,
@@ -350,6 +394,55 @@ describe('ThreadReviewWorker', () => {
 
     expect(modelClient.create).not.toHaveBeenCalled();
     expect(editChannelMessage).not.toHaveBeenCalled();
+  });
+
+  it('re-reads a finalized verdict after losing an appeal claim race', async () => {
+    const correctedJudgment: Judgment = {
+      ...judgment,
+      outcome: 'insufficient',
+      verdictText: '항소 후 교정된 결론입니다.',
+    };
+    const getThreadVerdict = vi
+      .fn<ThreadReviewRepository['getThreadVerdict']>()
+      .mockResolvedValueOnce(currentVerdict)
+      .mockResolvedValueOnce({
+        judgment: correctedJudgment,
+        pointsDelta: 0,
+        finalizedAt: '2026-08-25T00:01:00.000Z',
+        revision: 1,
+      });
+    const editChannelMessage = vi.fn<DiscordThreadClient['editChannelMessage']>();
+    const modelClient = model();
+    const worker = new ThreadReviewWorker(
+      modelClient,
+      repository({
+        getThreadReview: async () => ({ ...session, state: 'finalized', appealsUsed: 1 }),
+        claimThreadAppeal: async () => undefined,
+        getThreadVerdict,
+      }),
+      discord({ editChannelMessage }),
+    );
+
+    await worker.process(
+      {
+        kind: 'request_review',
+        action: 'appeal',
+        requestId: '1541459000000000010',
+        guildId,
+        sessionId,
+        userId: ownerId,
+        channelId,
+        anchorMessageId,
+        requestedAt: fixedNow.toISOString(),
+      },
+      fixedNow,
+    );
+
+    expect(getThreadVerdict).toHaveBeenCalledTimes(2);
+    expect(modelClient.create).not.toHaveBeenCalled();
+    expect(editChannelMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ content: expect.stringContaining(correctedJudgment.verdictText) }),
+    );
   });
 
   it('reopens an empty submission with a button and does not call AI', async () => {
@@ -419,8 +512,51 @@ describe('ThreadReviewWorker', () => {
       channelId,
       messageId: anchorMessageId,
       content: expect.stringContaining(judgment.verdictText),
-      components: [],
+      components: expect.arrayContaining([expect.any(Object)]),
     });
+  });
+
+  it('rejudges new appeal evidence and persists one corrected revision', async () => {
+    const appealSession: ThreadReviewSession = {
+      ...session,
+      pendingAction: 'appeal',
+      pendingRequestId: '1541459000000000010',
+      appealsUsed: 0,
+      initialClaimedAt: '2026-08-24T23:59:00.000Z',
+      appealFromAt: '2026-08-25T00:00:30.000Z',
+      claimedAt: '2026-08-25T00:03:00.000Z',
+    };
+    const finalizeThreadAppeal = vi.fn<ThreadReviewRepository['finalizeThreadAppeal']>();
+    const editChannelMessage = vi.fn<DiscordThreadClient['editChannelMessage']>();
+    const modelClient = model();
+    const worker = new ThreadReviewWorker(
+      modelClient,
+      repository({
+        claimThreadReviewForJudging: async () => appealSession,
+        getThreadVerdict: async () => currentVerdict,
+        finalizeThreadAppeal,
+      }),
+      discord({
+        editChannelMessage,
+        listThreadMessages: async () => [
+          message({ content: '최초 제출', timestamp: '2026-08-24T23:58:00.000Z' }),
+          message({ content: '새 반박', timestamp: '2026-08-25T00:02:00.000Z' }),
+        ],
+      }),
+    );
+
+    await worker.process(judgeJob, fixedNow);
+
+    expect(modelClient.create.mock.calls[0]?.[0].input).toContain('[제출자 반박] 새 반박');
+    expect(finalizeThreadAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ previousVerdict: currentVerdict, expectedAppealsUsed: 0 }),
+    );
+    expect(editChannelMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining('남은 항소: 1회'),
+        components: expect.arrayContaining([expect.any(Object)]),
+      }),
+    );
   });
 
   it('avoids duplicate AI and republishes an already finalized verdict', async () => {
@@ -431,7 +567,7 @@ describe('ThreadReviewWorker', () => {
       repository({
         claimThreadReviewForJudging: async () => undefined,
         getThreadReview: async () => ({ ...session, state: 'finalized' }),
-        getFinalizedJudgment: async () => judgment,
+        getThreadVerdict: async () => currentVerdict,
       }),
       discord({ editChannelMessage }),
     );

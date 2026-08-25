@@ -58,6 +58,8 @@ API Gateway ──► interactions Lambda
 - `/설정 저장`의 두 채널은 guild text channel만 허용한다.
 - `/심사`에는 옵션이 없다. 설정된 제출 채널에서만 실행할 수 있다.
 - bot이 공개 스레드를 준비하면 접수 소유자가 일반 텍스트 메시지를 작성하고 `⚖️ 심사 요청` 버튼을 누른다.
+- 최초 판결 anchor는 최종 결론과 남은 항소 횟수만 표시한다. 항소가 남아 있으면 소유자 전용 `📣 항소` 버튼을 제공하며 최대 2회까지 사용할 수 있다.
+- 항소하려면 직전 판결 뒤에 소유자가 새 반박을 작성해야 한다. 같은 기간 다른 구성원이 남긴 일반 텍스트는 `참여자 N`으로 익명화해 보증·참고 진술로 함께 검토하되, 보증 자체나 다수 의견을 사실 증명으로 취급하지 않는다.
 - 버튼 endpoint는 Discord 서명과 component payload를 검증하고 request-review job 하나만 기록한 뒤 3초 안에 type 6으로 ACK한다. Judge worker가 guild, 소유자, anchor 메시지, thread/채널, 마감, 설정 버전의 회차 상태를 fail-closed로 검증한다.
 - Discord의 component `data.id`는 32-bit 정수이며 legacy component의 `0`도 허용한다. application command의 `data.id` snowflake와 경계 parser에서 구분한다.
 - Discord payload, command option, snowflake ID, SQS body는 경계에서 Zod로 검증한다.
@@ -86,13 +88,14 @@ SK = SETTINGS
 
 기존 설정 갱신은 채널만 바꾸고 정책을 보존하며 `configVersion`을 1 올린다. DynamoDB 조건식은 읽은 버전과 현재 버전이 같은 경우에만 쓰기를 허용해 동시 갱신의 stale write를 차단한다. 정기 Scheduler가 활성화된다는 의미는 아니며, 현재 `cadenceMinutes`와 제출 창은 향후 자동 회차를 위한 저장 값이다.
 
-장기 대화 기억은 사용하지 않는다. 버튼 시점에 thread API를 최대 5페이지·500개까지만 조회하고, 그중 소유자가 작성한 최신 일반(non-bot, type 0) 텍스트 최대 100개를 오래된 순으로 합쳐 Unicode 문자 기준 최대 6,000자로 snapshot한다. attachment, system/bot/다른 사용자 메시지와 버튼 이후 내용은 AI 입력에서 제외한다. AI에는 이 현재 snapshot, 현재 누적 징계 점수, 고정 심사 규칙만 전달한다. 이전 제출 원문·판결문·다른 Discord 기록·`previous_response_id`는 보내지 않으며 `store: false`, `reasoning.context: current_turn`을 사용한다. `max_output_tokens`는 2,000이다. 회차에는 90일 TTL을 두고 판결·집계·회차 완료는 한 transaction으로 한 번만 반영한다.
+장기 대화 기억은 사용하지 않는다. 최초 심사는 버튼 시점에 thread API를 최대 5페이지·500개까지만 조회하고, 그중 소유자가 작성한 최신 일반(non-bot, type 0) 텍스트 최대 100개를 오래된 순으로 합쳐 Unicode 문자 기준 최대 6,000자로 snapshot한다. attachment, system/bot/다른 사용자 메시지와 버튼 이후 내용은 제외한다. 항소는 최초 제출 snapshot 최대 3,000자와 직전 판결 뒤부터 항소 클릭까지의 새 일반 텍스트 최대 100개·3,000자만 사용한다. 다른 작성자의 Discord ID는 OpenAI에 보내지 않고 `참여자 N`으로 치환한다. AI에는 해당 snapshot, 현재 누적 징계 점수, 고정 심사 규칙만 전달하며 `previous_response_id`를 누적하지 않고 `store: false`, `reasoning.context: current_turn`을 사용한다. `max_output_tokens`는 2,000이다. 회차와 immutable 항소 이력에는 90일 TTL을 둔다.
 
 ## 5. 비동기 신뢰성
 
 - interaction Lambda는 draft를 조건부 생성하고 prepare queue를 1초 지연 enqueue한 뒤 공개 type 4 응답을 반환한다. 이 짧은 지연은 Discord가 callback 원본 메시지를 생성하기 전에 worker가 조회하는 경쟁을 줄인다.
 - component handler는 signed actor·guild·channel·anchor·요청 시각을 request-review queue에 한 번 기록하고 type 6으로 ACK한다. DynamoDB 조회와 AI 호출은 ACK 경로에 두지 않는다.
 - Judge worker는 job의 binding과 마감을 DynamoDB 조건식으로 확인하면서 `draft → queued`를 claim하고, 고정 anchor를 `심사 중`으로 바꾼 뒤 judge-thread 처리를 이어간다.
+- 항소 claim은 `finalized → queued` 조건과 소유자·anchor·thread binding, `appealsUsed < 2`, 고유 interaction request ID를 함께 확인한다. 사용 횟수는 AI 판결과 transaction이 성공할 때만 증가하며 반박 없음·크레딧 소진은 횟수를 차감하지 않는다.
 - Judge는 `queued → judging` 또는 만료 lease만 claim한다. 정상 실행의 8분 lease는 SQS 중복 AI 호출을 억제하고, 실패는 `queued`로 되돌려 재시도한다.
 - 빈 snapshot은 AI를 호출하지 않고 `draft`와 버튼을 복구한다. 이미 finalized인 중복 job은 기존 판결을 anchor에 재게시한다.
 - thread 생성 권한 부족과 접수 뒤 설정 변경은 재시도로 회복되지 않으므로 명확한 안내를 anchor에 게시하고 정상 종료한다. 설정이 변경된 회차는 `cancelled`로 닫고 새 `/심사`를 요구한다.
@@ -100,6 +103,7 @@ SK = SETTINGS
 - judge queue visibility timeout은 540초, Lambda timeout은 90초, 실패 3회 후 DLQ로 이동한다.
 - Judge는 이미 확정된 판결을 먼저 확인한다. Discord 후속응답만 실패한 재시도에서는 OpenAI와 통계 갱신을 반복하지 않고 기존 판결을 다시 게시한다.
 - 통계 동시 갱신 충돌 시 최신 통계를 다시 읽어 제한적으로 재시도한다.
+- 항소 확정은 이전 verdict를 `APPEAL#01` 또는 `APPEAL#02` 감사 record로 보존하고, 현재 verdict 교체·판정별 횟수와 징계 점수 교정·session 항소 횟수 증가를 한 transaction으로 처리한다. 항소는 새 심사 회차가 아니므로 전체 심사 횟수와 생존 연속 횟수는 증가시키지 않는다.
 
 ## 6. 환경변수, secret, IAM
 
@@ -132,4 +136,4 @@ OpenAI가 `credit_balance_exhausted`를 반환하면 안전한 `ai_credit_exhaus
 
 Pulumi의 AWS Budget 기본 한도는 월 $3이며 실제 비용 80%, 예상 비용 100%에서 이메일 알림을 보낸다. Lambda는 VPC 밖에 두어 NAT 고정비를 피하고 DynamoDB on-demand와 SQS를 사용한다. 예산은 사용량과 계정 Free Tier에 따라 보장되지 않는다. AI 호출은 `/심사`에만 한정되고 누적 문맥을 보내지 않아 토큰 비용을 제한한다.
 
-현재 구현에는 OpenAI 요청 자체를 막는 월별 hard quota가 없다. $3 Budget은 알림 장치이지 자동 차단 장치가 아니므로 운영자는 AWS Budget과 OpenAI usage를 함께 확인해야 한다.
+현재 구현에는 OpenAI 요청 자체를 막는 월별 hard quota가 없다. 한 회차당 최초 심사 1회와 항소 최대 2회로 AI 호출 상한을 제한하지만, $3 Budget은 알림 장치이지 자동 차단 장치가 아니므로 운영자는 AWS Budget과 OpenAI usage를 함께 확인해야 한다.

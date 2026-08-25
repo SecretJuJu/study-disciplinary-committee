@@ -1,9 +1,11 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
-import { judgmentSchema, type GuildSettings, type Judgment } from '@disciplinary-committee/domain';
-import { DynamoReviewRepository, sessionPk, verdictSk } from '@disciplinary-committee/persistence';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import type { GuildSettings } from '@disciplinary-committee/domain';
+import { DynamoReviewRepository } from '@disciplinary-committee/persistence';
 import type {
+  CurrentThreadVerdict,
+  FinalizeThreadAppealInput,
   FinalizeThreadJudgmentInput,
   ThreadReviewSession,
 } from '@disciplinary-committee/persistence';
@@ -48,20 +50,6 @@ const sqsEventSchema = z
   })
   .strict();
 
-const verdictRecordSchema = z
-  .object({
-    PK: z.string(),
-    SK: z.string(),
-    entityType: z.literal('Verdict'),
-    sessionId: z.string().min(1).max(128),
-    userId: z.string().regex(/^\d{17,20}$/),
-    judgment: judgmentSchema,
-    pointsDelta: z.number().int().nonnegative(),
-    finalizedAt: z.string().datetime(),
-    reason: z.literal('judgment'),
-  })
-  .strict();
-
 export type SecretValueClient = {
   send(command: GetSecretValueCommand): Promise<{ SecretString?: string | undefined }>;
 };
@@ -94,10 +82,7 @@ export function createCachedAppSecretsLoader(
 class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
   private readonly repository: DynamoReviewRepository;
 
-  public constructor(
-    private readonly client: DynamoDBDocumentClient,
-    private readonly tableName: string,
-  ) {
+  public constructor(client: DynamoDBDocumentClient, tableName: string) {
     this.repository = new DynamoReviewRepository(client, tableName);
   }
 
@@ -137,6 +122,12 @@ class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
     return this.repository.claimThreadReview(input);
   }
 
+  public claimThreadAppeal(
+    input: Parameters<ThreadReviewRepository['claimThreadAppeal']>[0],
+  ): Promise<ThreadReviewSession | undefined> {
+    return this.repository.claimThreadAppeal(input);
+  }
+
   public claimThreadReviewForJudging(
     input: Parameters<ThreadReviewRepository['claimThreadReviewForJudging']>[0],
   ): Promise<ThreadReviewSession | undefined> {
@@ -147,6 +138,12 @@ class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
     input: Parameters<ThreadReviewRepository['reopenThreadReview']>[0],
   ): Promise<void> {
     return this.repository.reopenThreadReview(input);
+  }
+
+  public restoreThreadAppeal(
+    input: Parameters<ThreadReviewRepository['restoreThreadAppeal']>[0],
+  ): Promise<void> {
+    return this.repository.restoreThreadAppeal(input);
   }
 
   public releaseThreadReview(
@@ -165,26 +162,22 @@ class DynamoJudgeRepository implements JudgeRepository, ThreadReviewRepository {
     return this.repository.finalizeThreadJudgment(input);
   }
 
+  public finalizeThreadAppeal(input: FinalizeThreadAppealInput): Promise<void> {
+    return this.repository.finalizeThreadAppeal(input);
+  }
+
+  public getThreadVerdict(
+    sessionId: string,
+    userId: string,
+  ): Promise<CurrentThreadVerdict | undefined> {
+    return this.repository.getThreadVerdict(sessionId, userId);
+  }
+
   public async getFinalizedJudgment(
     sessionId: string,
     userId: string,
-  ): Promise<Judgment | undefined> {
-    const result = await this.client.send(
-      new GetCommand({
-        TableName: this.tableName,
-        Key: { PK: sessionPk(sessionId), SK: verdictSk(userId) },
-        ConsistentRead: true,
-      }),
-    );
-    if (result.Item === undefined) {
-      return undefined;
-    }
-
-    const record = verdictRecordSchema.parse(result.Item);
-    if (record.PK !== sessionPk(sessionId) || record.SK !== verdictSk(userId)) {
-      throw new TypeError('Stored verdict envelope is invalid');
-    }
-    return record.judgment;
+  ): Promise<CurrentThreadVerdict['judgment'] | undefined> {
+    return (await this.repository.getThreadVerdict(sessionId, userId))?.judgment;
   }
 }
 

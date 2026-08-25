@@ -334,3 +334,21 @@
 
 - Discord application command의 `data.id`는 snowflake 문자열이지만 message component의 `data.id`는 32-bit 정수이며 legacy component는 `0`을 보낼 수 있다. 공용 interaction parser에서 두 형태를 구분해 수용해야 한다.
 - component interaction은 3초 안에 초기 응답이 필요하다. 버튼 경로는 signed 요청을 request-review SQS에 기록한 뒤 type 6으로 ACK하고, DynamoDB 조건부 권한 검증·상태 전이·AI 처리는 Judge worker에서 수행한다.
+
+[2026-08-25 13:08] - 스레드 항소 판결 교정
+
+### DECISIONS
+
+- 항소는 최초 회차에 포함되며 최대 2회다. 성공한 AI 재심만 횟수를 차감하고, 본인 반박 없음·크레딧 소진은 기존 판결과 버튼을 복구한다.
+- 직전 판결 뒤부터 클릭 시점까지의 새 메시지만 항소 자료로 사용한다. 제출자 반박을 필수로 하고, 다른 작성자는 `참여자 N`으로 익명화해 참고 진술로만 전달한다.
+- 항소 결과는 새 심사 횟수나 생존 연속을 늘리지 않는다. 현재 판정별 횟수와 징계 점수만 교정하고, 이전·새 판결은 회차별 immutable 항소 record로 남긴다.
+
+### LEARNINGS
+
+- 항소의 멱등성은 Discord interaction request ID, session 상태·lease, verdict revision, appeal record 조건을 함께 사용해야 AI 호출·횟수·통계의 중복 반영을 막을 수 있다.
+- 현재 verdict 교체, 통계 교정, 항소 횟수 증가, 감사 record 저장은 한 DynamoDB transaction이어야 한다.
+- 항소 claim 전에 읽은 verdict는 경쟁 worker의 확정 직후 stale할 수 있다. claim에 실패해 finalized anchor를 복구할 때는 current verdict를 consistent read로 다시 조회해야 한다.
+
+### NEXT TASK TIPS
+
+- production 배포 뒤 기존 finalized anchor는 자동 이벤트가 없으므로 새 판결부터 항소 버튼이 표시된다. 과거 anchor에 버튼이 필요하면 별도 안전한 재렌더 절차를 승인받아 수행한다.

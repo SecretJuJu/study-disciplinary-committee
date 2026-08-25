@@ -233,6 +233,8 @@ export async function routeComponentInteraction(
   const requestedAt = dependencies.now().toISOString();
   await dependencies.judgeQueue.enqueue({
     kind: 'request_review',
+    action: button.action,
+    requestId: interaction.id,
     guildId: context.guildId,
     sessionId: button.sessionId,
     userId: context.userId,

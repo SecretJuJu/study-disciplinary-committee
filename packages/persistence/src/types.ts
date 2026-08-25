@@ -19,6 +19,7 @@ export type ReviewSessionRecord = {
 };
 
 export type ThreadReviewState = 'draft' | 'queued' | 'judging' | 'finalized' | 'cancelled';
+export type ThreadReviewAction = 'initial' | 'appeal';
 
 export type ThreadReviewSession = {
   sessionId: string;
@@ -34,6 +35,12 @@ export type ThreadReviewSession = {
   threadId?: string | undefined;
   leaseUntil?: string | undefined;
   claimedAt?: string | undefined;
+  initialClaimedAt?: string | undefined;
+  appealFromAt?: string | undefined;
+  pendingAction?: ThreadReviewAction | undefined;
+  appealsUsed?: number | undefined;
+  pendingRequestId?: string | undefined;
+  lastProcessedRequestId?: string | undefined;
 };
 
 export type ThreadReviewSessionRecord = ThreadReviewSession & {
@@ -64,6 +71,22 @@ export type VerdictRecord = {
   pointsDelta: number;
   finalizedAt: string;
   reason: 'judgment' | 'absence';
+  revision?: number | undefined;
+};
+
+export type ThreadAppealRecord = {
+  PK: string;
+  SK: string;
+  entityType: 'ThreadAppeal';
+  sessionId: string;
+  userId: string;
+  appealNumber: number;
+  previousJudgment: Judgment;
+  judgment: Judgment;
+  previousPointsDelta: number;
+  pointsDelta: number;
+  finalizedAt: string;
+  expiresAt: number;
 };
 
 export type UserStatsRecord = UserStats & {
