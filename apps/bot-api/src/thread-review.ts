@@ -1,5 +1,5 @@
 import { appealRequest, parseJudgment, judgeRequest } from '@disciplinary-committee/ai-judge';
-import { pointsForOutcome } from '@disciplinary-committee/domain';
+import { pointsForOutcome, submissionCharacterLimit } from '@disciplinary-committee/domain';
 import type { GuildSettings, Judgment, UserStats } from '@disciplinary-committee/domain';
 import { diagnosticForFailure } from '@disciplinary-committee/domain';
 import type {
@@ -19,8 +19,12 @@ import {
 import type { PrepareReviewJob, RequestReviewJob, ThreadReviewJob } from './review-jobs.js';
 import { threadReviewJobSchema } from './review-jobs.js';
 
-export const reviewSnapshotCharacterLimit = 6_000;
+export const reviewSnapshotCharacterLimit = submissionCharacterLimit;
 const reviewMessageLimit = 100;
+const appealOriginalCharacterLimit = 10_000;
+const appealOwnerEvidenceCharacterLimit = 5_000;
+const appealParticipantEvidenceCharacterLimit = 3_000;
+const omissionMarker = '\n\n[중간 내용이 길어 일부 생략됨]\n\n';
 const judgingLeaseMilliseconds = 8 * 60 * 1_000;
 
 export type DiscordThreadMessage = {
@@ -147,8 +151,20 @@ export function appealButtonComponents(sessionId: string, appealsUsed: number): 
   ];
 }
 
-function limitCharacters(value: string, limit: number): string {
-  return Array.from(value).slice(0, limit).join('');
+function limitCharactersPreservingEnds(value: string, limit: number): string {
+  const characters = Array.from(value);
+  if (characters.length <= limit) {
+    return value;
+  }
+  const markerCharacters = Array.from(omissionMarker);
+  const retainedCharacters = limit - markerCharacters.length;
+  const headLength = Math.ceil(retainedCharacters / 2);
+  const tailLength = retainedCharacters - headLength;
+  return [
+    ...characters.slice(0, headLength),
+    ...markerCharacters,
+    ...characters.slice(-tailLength),
+  ].join('');
 }
 
 function redactDiscordReferences(value: string): string {
@@ -179,7 +195,7 @@ export function snapshotOwnerMessages(
     .slice(-reviewMessageLimit)
     .map((message) => redactDiscordReferences(message.content.trim()))
     .join('\n\n');
-  return limitCharacters(content, reviewSnapshotCharacterLimit).trim();
+  return limitCharactersPreservingEnds(content, reviewSnapshotCharacterLimit).trim();
 }
 
 export type AppealSnapshot = {
@@ -204,7 +220,7 @@ export function snapshotAppealMessages(
         Date.parse(message.timestamp) <= Date.parse(claimedAt),
     )
     .toSorted((left, right) => Date.parse(left.timestamp) - Date.parse(right.timestamp));
-  const originalSubmission = limitCharacters(
+  const originalSubmission = limitCharactersPreservingEnds(
     sorted
       .filter(
         (message) =>
@@ -214,7 +230,7 @@ export function snapshotAppealMessages(
       .slice(-reviewMessageLimit)
       .map((message) => redactDiscordReferences(message.content.trim()))
       .join('\n\n'),
-    reviewSnapshotCharacterLimit / 2,
+    appealOriginalCharacterLimit,
   ).trim();
   const appealMessages = sorted
     .filter((message) => Date.parse(message.timestamp) > Date.parse(appealFromAt))
@@ -231,8 +247,11 @@ export function snapshotAppealMessages(
       return `[참여자 ${number} 참고 진술] ${redactDiscordReferences(message.content.trim())}`;
     });
   const appealEvidence = [
-    limitCharacters(ownerRebuttals.join('\n\n'), 1_800),
-    limitCharacters(participantEvidence.join('\n\n'), 1_200),
+    limitCharactersPreservingEnds(ownerRebuttals.join('\n\n'), appealOwnerEvidenceCharacterLimit),
+    limitCharactersPreservingEnds(
+      participantEvidence.join('\n\n'),
+      appealParticipantEvidenceCharacterLimit,
+    ),
   ]
     .filter((value) => value.length > 0)
     .join('\n\n')

@@ -182,9 +182,15 @@ describe('owner message snapshot', () => {
     expect(snapshot).toBe('버튼 전');
   });
 
-  it('bounds the current snapshot to 6,000 Unicode characters', () => {
-    const snapshot = snapshotOwnerMessages([message({ content: '가'.repeat(7_000) })], ownerId);
+  it('keeps both ends when bounding the current snapshot to 20,000 Unicode characters', () => {
+    const snapshot = snapshotOwnerMessages(
+      [message({ content: `앞${'가'.repeat(20_000)}뒤` })],
+      ownerId,
+    );
     expect(Array.from(snapshot)).toHaveLength(reviewSnapshotCharacterLimit);
+    expect(snapshot).toMatch(/^앞/);
+    expect(snapshot).toContain('[중간 내용이 길어 일부 생략됨]');
+    expect(snapshot).toMatch(/뒤$/);
   });
 
   it('keeps the latest 100 owner messages after filtering bounded public-thread noise', () => {

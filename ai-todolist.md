@@ -159,6 +159,22 @@ created_at: 2026-08-25T00:25:00+09:00
 - [x] 현재 verdict와 `/내기록`의 판정별 횟수·징계 점수는 같은 transaction에서 교정되고 이전 판정은 immutable appeal record로 남는다.
 - [x] 관련 문서와 최소 회귀 테스트가 갱신되고 `pnpm build && pnpm check`가 통과한다.
 
+### Task 9: 장문 심사 입력 확장
+
+**Status:** completed
+
+#### Subtasks
+
+- [x] **9.1** 최초 심사 snapshot을 최대 20,000자로 확장하고 초과 시 앞뒤 문맥을 보존하며, 항소 입력 한도·도메인 검증·사용 문서·최소 경계 테스트를 함께 정합화한다.
+
+#### Acceptance Criteria
+
+- [x] 최초 심사는 소유자 메시지 최대 100개에서 Unicode 20,000자까지 단일 OpenAI 요청으로 전달한다.
+- [x] 20,000자를 초과하면 앞부분과 뒷부분을 보존하고 중간 생략 표식을 포함한다.
+- [x] 항소는 최초 제출 최대 10,000자와 새 제출자 반박 최대 5,000자·참여자 참고 진술 최대 3,000자를 사용한다.
+- [x] 호출 횟수, stateless Responses API 설정, SQS/Lambda 아키텍처는 바꾸지 않는다.
+- [x] 관련 문서와 최소 경계 테스트가 갱신되고 `pnpm build && pnpm check`가 통과한다.
+
 ## Final Checklist
 
 - [ ] All tasks completed
@@ -169,6 +185,7 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ## Execution Notes
 
+- 2026-08-26 15:32 KST: Task 9 로컬 구현 완료. 최초 심사 입력을 Unicode 20,000자로 확장하고 초과 시 앞뒤 문맥과 중간 생략 표식을 보존한다. Zod 경계도 UTF-16 code unit이 아닌 Unicode 문자 수로 동일하게 검증한다. 항소는 최초 제출 10,000자, 제출자 반박 5,000자, 참여자 참고 진술 3,000자로 확장했으며 OpenAI 호출 횟수·`store: false`·현재 SQS/Judge Lambda 구조는 유지했다. 좁은 범위 3개 파일 30개 테스트와 전체 `pnpm build && pnpm check`의 16개 파일 118개 테스트, format, ESLint, strict typecheck가 통과했다. 실제 과금 장문 QA는 수행하지 않았다.
 - 2026-08-25 13:21 KST: Task 8 로컬 구현 완료. 최종 anchor는 결론·남은 항소 횟수·항소 버튼만 표시하고, 소유자 반박이 있는 경우에만 직전 판결 이후 메시지를 snapshot해 기존 Judge SQS/Lambda에서 재심한다. 참여자 ID·mention은 익명화하고 보증은 참고 진술로만 취급한다. 성공한 항소만 최대 2회 차감하며 current verdict, 판정별 통계, 징계 점수, immutable 항소 record를 단일 DynamoDB transaction으로 갱신한다. 중복 interaction/SQS는 request ID, session state, lease, verdict revision 조건으로 억제하고, 항소 claim 경쟁에서 진 worker는 current verdict를 재조회해 stale anchor overwrite를 막는다. 새 회귀 테스트는 핵심 경로만 추가했고 `pnpm build && pnpm check`에서 16개 파일 118개 테스트와 build/format/ESLint/strict typecheck가 통과했다. credential pattern은 0건이며 실제 과금 항소 QA는 수행하지 않았다.
 - 2026-08-25 11:40 KST: 최종 pre-commit review 보정을 기록했다. 접수 뒤 guild 설정이 변경되면 회차를 `cancelled`로 조건부 전이하고, anchor 수정이 일시 실패해 SQS가 재전달되어도 저장 상태에서 동일한 취소 안내를 deterministic하게 복구한다. Discord public thread 생성은 권한 부족 HTTP 403만 비재시도 setup 결과로 바꿔 명시적인 권한 안내를 게시하며, HTTP 400/404는 이미 thread가 만들어진 race인지 GET으로 재확인한 뒤 없으면 원래 오류를 유지해 재시도한다. 보정 관련 narrow 테스트 47개가 통과한 뒤 Root가 `pnpm build && pnpm check`를 재실행해 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. 추가 안전 검사도 `credential_pattern_hits=0`, `tracked_env_files=0`, `interaction_secret_markers=0`, cached diff check 통과로 확인했다. 이 기록 단계에서는 코드·stage·commit·push·deploy를 수행하지 않았다.
 - 2026-08-25 11:14 KST: Task 7 완료. `/심사`를 옵션 없는 공개 접수로 바꾸고 prepare(1초 지연)와 judge-thread discriminated SQS job을 기존 Judge Lambda에 연결했다. signed component는 guild·owner·anchor·thread/channel·configVersion·deadline을 검증하고 `draft → queued`를 조건부 claim한다. worker는 8분 lease로 중복 AI를 억제한다. Discord timestamp는 UTC `Z`와 유효한 offset을 허용한다. thread는 최대 5페이지·500개까지만 bounded pagination으로 조회하고, 버튼 시각 이전 소유자의 최신 type 0 non-bot 텍스트 최대 100개를 오래된 순으로 정렬해 Unicode 6,000자로 snapshot한다. 재시도 release는 `claimedAt`을 보존하고 실제 reopen만 제거해 버튼 시각 경계를 유지한다. 빈 제출/크레딧 소진은 draft와 버튼을 복구하고, 판결·안전 실패는 bot REST로 stable anchor를 수정한다. 판결·통계·session finalized는 단일 transaction이다. Discord 점검에 Read Message History/Create Public Threads/Send Messages in Threads와 Message Content Intent를 추가했고 IAM은 두 함수의 DynamoDB UpdateItem만 확장했다. 현재 production은 debug 채널과 submission 채널이 동일하다는 전제로 권한 smoke check를 수행한다. 최초 검증 16개 파일 103개 테스트 이후 Root review 보정까지 포함한 최종 검증은 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. credential pattern, tracked env file, interaction secret marker는 각각 0건이고 cached diff check도 통과했다. 외부 Discord command 등록·AWS 배포·production 수동 QA는 이 Task 범위에서 수행하지 않았다.

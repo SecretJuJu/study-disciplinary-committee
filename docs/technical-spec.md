@@ -88,7 +88,7 @@ SK = SETTINGS
 
 기존 설정 갱신은 채널만 바꾸고 정책을 보존하며 `configVersion`을 1 올린다. DynamoDB 조건식은 읽은 버전과 현재 버전이 같은 경우에만 쓰기를 허용해 동시 갱신의 stale write를 차단한다. 정기 Scheduler가 활성화된다는 의미는 아니며, 현재 `cadenceMinutes`와 제출 창은 향후 자동 회차를 위한 저장 값이다.
 
-장기 대화 기억은 사용하지 않는다. 최초 심사는 버튼 시점에 thread API를 최대 5페이지·500개까지만 조회하고, 그중 소유자가 작성한 최신 일반(non-bot, type 0) 텍스트 최대 100개를 오래된 순으로 합쳐 Unicode 문자 기준 최대 6,000자로 snapshot한다. attachment, system/bot/다른 사용자 메시지와 버튼 이후 내용은 제외한다. 항소는 최초 제출 snapshot 최대 3,000자와 직전 판결 뒤부터 항소 클릭까지의 새 일반 텍스트 최대 100개·3,000자만 사용한다. 다른 작성자의 Discord ID는 OpenAI에 보내지 않고 `참여자 N`으로 치환한다. AI에는 해당 snapshot, 현재 누적 징계 점수, 고정 심사 규칙만 전달하며 `previous_response_id`를 누적하지 않고 `store: false`, `reasoning.context: current_turn`을 사용한다. `max_output_tokens`는 2,000이다. 회차와 immutable 항소 이력에는 90일 TTL을 둔다.
+장기 대화 기억은 사용하지 않는다. 최초 심사는 버튼 시점에 thread API를 최대 5페이지·500개까지만 조회하고, 그중 소유자가 작성한 최신 일반(non-bot, type 0) 텍스트 최대 100개를 오래된 순으로 합쳐 Unicode 문자 기준 최대 20,000자로 snapshot한다. 초과 입력은 앞부분과 뒷부분을 보존하고 `[중간 내용이 길어 일부 생략됨]` 표식을 삽입한다. attachment, system/bot/다른 사용자 메시지와 버튼 이후 내용은 제외한다. 항소는 최초 제출 snapshot 최대 10,000자와 직전 판결 뒤부터 항소 클릭까지의 새 일반 텍스트 최대 100개를 사용하되, 제출자 반박은 최대 5,000자, 익명화한 참여자 참고 진술은 최대 3,000자로 제한한다. AI에는 해당 snapshot, 현재 누적 징계 점수, 고정 심사 규칙만 전달하며 `previous_response_id`를 누적하지 않고 `store: false`, `reasoning.context: current_turn`을 사용한다. 호출 횟수는 늘리지 않고 `max_output_tokens`는 2,000으로 유지한다. `gpt-5.6-luna`의 공식 1,050,000-token context window보다 낮은 애플리케이션 상한이며, 회차와 immutable 항소 이력에는 90일 TTL을 둔다.
 
 ## 5. 비동기 신뢰성
 

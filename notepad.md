@@ -352,3 +352,15 @@
 ### NEXT TASK TIPS
 
 - production 배포 뒤 기존 finalized anchor는 자동 이벤트가 없으므로 새 판결부터 항소 버튼이 표시된다. 과거 anchor에 버튼이 필요하면 별도 안전한 재렌더 절차를 승인받아 수행한다.
+
+[2026-08-26 15:31] - 장문 심사 입력 상한
+
+### DECISIONS
+
+- 최초 심사 snapshot은 Unicode 20,000자까지 단일 OpenAI 요청으로 전달한다. 초과하면 앞부분과 뒷부분을 절반가량 보존하고 명시적인 중간 생략 표식을 넣는다.
+- 항소는 최초 제출 10,000자, 제출자 반박 5,000자, 참여자 참고 진술 3,000자로 제한한다. AI 호출 횟수와 stateless Responses 설정은 유지한다.
+
+### LEARNINGS
+
+- `gpt-5.6-luna`의 공식 context window는 1,050,000 tokens이므로 20,000자 제한은 모델 한계가 아니라 비용·입력 폭주를 제어하는 애플리케이션 정책이다.
+- 로컬 `ghp` 명령은 GitHub 개인 계정 `SecretJuJu`, `ghw` 명령은 업무 계정 `seungbo-wonderwall`로 전환한다. 이 프로젝트의 commit/push/deploy 전에는 `ghp` 상태를 확인한다.

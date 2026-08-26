@@ -86,9 +86,17 @@ export const guildSettingsSchema = z
   });
 export type GuildSettings = z.infer<typeof guildSettingsSchema>;
 
+export const submissionCharacterLimit = 20_000;
+
 export const submissionInputSchema = z
   .object({
-    whatStudied: z.string().trim().min(1).max(6_000),
+    whatStudied: z
+      .string()
+      .trim()
+      .min(1)
+      .refine((value) => Array.from(value).length <= submissionCharacterLimit, {
+        message: `Must contain at most ${submissionCharacterLimit} Unicode characters`,
+      }),
     duration: z.string().trim().min(1).max(100).optional(),
     learned: z.string().trim().min(1).max(1_000).optional(),
   })

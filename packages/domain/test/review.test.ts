@@ -6,6 +6,7 @@ import {
   defaultScorePolicy,
   disciplinaryStatusFor,
   guildSettingsSchema,
+  submissionCharacterLimit,
   submissionInputSchema,
   toPromptSubmission,
   transitionReviewSession,
@@ -86,6 +87,14 @@ describe('domain validation', () => {
 
   it('enforces concise untrusted submissions before AI prompt construction', () => {
     expect(submissionInputSchema.safeParse({ whatStudied: '   ' }).success).toBe(false);
+    expect(
+      submissionInputSchema.safeParse({ whatStudied: '😀'.repeat(submissionCharacterLimit) })
+        .success,
+    ).toBe(true);
+    expect(
+      submissionInputSchema.safeParse({ whatStudied: '😀'.repeat(submissionCharacterLimit + 1) })
+        .success,
+    ).toBe(false);
 
     const submission = submissionInputSchema.parse({
       whatStudied: 'Spring 트랜잭션 전파를 구현으로 확인했습니다.',
