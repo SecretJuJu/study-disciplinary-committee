@@ -175,6 +175,22 @@ created_at: 2026-08-25T00:25:00+09:00
 - [x] 호출 횟수, stateless Responses API 설정, SQS/Lambda 아키텍처는 바꾸지 않는다.
 - [x] 관련 문서와 최소 경계 테스트가 갱신되고 `pnpm build && pnpm check`가 통과한다.
 
+### Task 10: 항소 재심 기준 조정
+
+**Status:** completed
+
+#### Subtasks
+
+- [x] **10.1** 구체적인 이해·작업 과정·시행착오와 일치하는 참여자 진술을 실질적인 보완 자료로 평가하되, 막연한 보증·시간 주장과 명백한 모순은 엄격히 구분하도록 항소 prompt와 문서·최소 회귀 테스트를 정합화한다.
+
+#### Acceptance Criteria
+
+- [x] 항소는 최초 제출과 새 자료 전체를 선입견 없이 다시 평가하고, 직전 판결의 핵심 부족 사유가 해소되면 결과를 변경할 수 있다.
+- [x] 산출물 부재만으로 항소를 기각하지 않으며 본인 말로 설명한 이해·구체적 과정·시행착오·판단 근거를 보완 증거로 인정할 수 있다.
+- [x] 구체적이고 독립적으로 일치하는 참여자 진술은 신뢰도를 높일 수 있지만 막연한 보증·다수 의견·학습 시간만으로는 판정을 바꾸지 않는다.
+- [x] 더 불리한 결과는 Structured Output에 명백한 모순이나 조작 사유가 있고 경계 검증을 통과한 경우에만 반영한다.
+- [x] 관련 문서와 최소 prompt 계약 테스트가 갱신되고 `pnpm build && pnpm check`가 통과한다.
+
 ## Final Checklist
 
 - [ ] All tasks completed
@@ -185,6 +201,7 @@ created_at: 2026-08-25T00:25:00+09:00
 
 ## Execution Notes
 
+- 2026-09-01 09:38 KST: Task 10 로컬 구현 완료. 초기 심사 기준과 항소 횟수·기록 구조는 유지하고 항소 재심 기준을 조정했다. 최초 제출과 새 자료 전체를 다시 평가하며, 본인 말로 설명한 이해·구체적 작업 과정·시행착오·판단 근거와 독립적으로 일치하는 참여자 진술을 실질적인 보완 자료로 반영한다. 막연한 보증·다수 의견·학습 시간은 계속 배제한다. 독립 리뷰 지적에 따라 더 불리한 변경은 Structured Output에 명백한 모순 또는 조작 사유가 있고 경계 검증을 통과한 경우에만 반영하도록 보정했다. 좁은 범위 2개 파일 22개 테스트와 전체 `pnpm build && pnpm check`의 16개 파일 119개 테스트, format, ESLint, strict typecheck, `git diff --check`가 통과했다. production 실제 과금 항소 QA는 배포 후 별도 확인한다.
 - 2026-08-26 15:32 KST: Task 9 로컬 구현 완료. 최초 심사 입력을 Unicode 20,000자로 확장하고 초과 시 앞뒤 문맥과 중간 생략 표식을 보존한다. Zod 경계도 UTF-16 code unit이 아닌 Unicode 문자 수로 동일하게 검증한다. 항소는 최초 제출 10,000자, 제출자 반박 5,000자, 참여자 참고 진술 3,000자로 확장했으며 OpenAI 호출 횟수·`store: false`·현재 SQS/Judge Lambda 구조는 유지했다. 좁은 범위 3개 파일 30개 테스트와 전체 `pnpm build && pnpm check`의 16개 파일 118개 테스트, format, ESLint, strict typecheck가 통과했다. 실제 과금 장문 QA는 수행하지 않았다.
 - 2026-08-25 13:21 KST: Task 8 로컬 구현 완료. 최종 anchor는 결론·남은 항소 횟수·항소 버튼만 표시하고, 소유자 반박이 있는 경우에만 직전 판결 이후 메시지를 snapshot해 기존 Judge SQS/Lambda에서 재심한다. 참여자 ID·mention은 익명화하고 보증은 참고 진술로만 취급한다. 성공한 항소만 최대 2회 차감하며 current verdict, 판정별 통계, 징계 점수, immutable 항소 record를 단일 DynamoDB transaction으로 갱신한다. 중복 interaction/SQS는 request ID, session state, lease, verdict revision 조건으로 억제하고, 항소 claim 경쟁에서 진 worker는 current verdict를 재조회해 stale anchor overwrite를 막는다. 새 회귀 테스트는 핵심 경로만 추가했고 `pnpm build && pnpm check`에서 16개 파일 118개 테스트와 build/format/ESLint/strict typecheck가 통과했다. credential pattern은 0건이며 실제 과금 항소 QA는 수행하지 않았다.
 - 2026-08-25 11:40 KST: 최종 pre-commit review 보정을 기록했다. 접수 뒤 guild 설정이 변경되면 회차를 `cancelled`로 조건부 전이하고, anchor 수정이 일시 실패해 SQS가 재전달되어도 저장 상태에서 동일한 취소 안내를 deterministic하게 복구한다. Discord public thread 생성은 권한 부족 HTTP 403만 비재시도 setup 결과로 바꿔 명시적인 권한 안내를 게시하며, HTTP 400/404는 이미 thread가 만들어진 race인지 GET으로 재확인한 뒤 없으면 원래 오류를 유지해 재시도한다. 보정 관련 narrow 테스트 47개가 통과한 뒤 Root가 `pnpm build && pnpm check`를 재실행해 16개 파일 111개 테스트와 build/format/ESLint/strict typecheck를 모두 통과했다. 추가 안전 검사도 `credential_pattern_hits=0`, `tracked_env_files=0`, `interaction_secret_markers=0`, cached diff check 통과로 확인했다. 이 기록 단계에서는 코드·stage·commit·push·deploy를 수행하지 않았다.

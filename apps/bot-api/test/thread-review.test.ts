@@ -136,7 +136,13 @@ function discord(overrides: Partial<DiscordThreadClient> = {}): DiscordThreadCli
 
 function model() {
   return {
-    create: vi.fn<ModelClient['create']>(async () => ({ outputText: JSON.stringify(judgment) })),
+    create: vi.fn<ModelClient['create']>(async (request) => ({
+      outputText: JSON.stringify(
+        request.text.format.name === 'disciplinary_appeal_judgment'
+          ? { ...judgment, adverseChangeReason: 'none' }
+          : judgment,
+      ),
+    })),
   };
 }
 

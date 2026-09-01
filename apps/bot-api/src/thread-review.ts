@@ -1,4 +1,9 @@
-import { appealRequest, parseJudgment, judgeRequest } from '@disciplinary-committee/ai-judge';
+import {
+  appealRequest,
+  parseAppealJudgment,
+  parseJudgment,
+  judgeRequest,
+} from '@disciplinary-committee/ai-judge';
 import { pointsForOutcome, submissionCharacterLimit } from '@disciplinary-committee/domain';
 import type { GuildSettings, Judgment, UserStats } from '@disciplinary-committee/domain';
 import { diagnosticForFailure } from '@disciplinary-committee/domain';
@@ -636,7 +641,10 @@ export class ThreadReviewWorker {
       const response = await this.model.create(modelRequest);
       let judgment: Judgment;
       try {
-        judgment = parseJudgment(response.outputText);
+        judgment =
+          appealVerdict === undefined
+            ? parseJudgment(response.outputText)
+            : parseAppealJudgment(response.outputText, appealVerdict.judgment);
       } catch (error) {
         throw new RetryableModelError('ai_output_invalid', { cause: error });
       }

@@ -59,7 +59,8 @@ API Gateway ──► interactions Lambda
 - `/심사`에는 옵션이 없다. 설정된 제출 채널에서만 실행할 수 있다.
 - bot이 공개 스레드를 준비하면 접수 소유자가 일반 텍스트 메시지를 작성하고 `⚖️ 심사 요청` 버튼을 누른다.
 - 최초 판결 anchor는 최종 결론과 남은 항소 횟수만 표시한다. 항소가 남아 있으면 소유자 전용 `📣 항소` 버튼을 제공하며 최대 2회까지 사용할 수 있다.
-- 항소하려면 직전 판결 뒤에 소유자가 새 반박을 작성해야 한다. 같은 기간 다른 구성원이 남긴 일반 텍스트는 `참여자 N`으로 익명화해 보증·참고 진술로 함께 검토하되, 보증 자체나 다수 의견을 사실 증명으로 취급하지 않는다.
+- 항소하려면 직전 판결 뒤에 소유자가 새 반박을 작성해야 한다. 재심은 최초 제출과 새 자료 전체를 다시 평가하며, 본인 말로 설명한 이해·구체적 작업 과정·시행착오·판단 근거는 코드나 문서 산출물이 없어도 보완 증거가 될 수 있다. 직전 판결의 핵심 부족 사유가 해소되면 결과를 변경한다. 더 불리한 결과는 Structured Output의 `adverseChangeReason`이 최초 제출과의 명백한 모순 또는 조작으로 설정되고 경계 검증을 통과한 경우에만 반영한다.
+- 같은 기간 다른 구성원이 남긴 일반 텍스트는 `참여자 N`으로 익명화해 보증·참고 진술로 함께 검토한다. 구체적이고 제출 내용과 독립적으로 일치하는 진술은 신뢰도를 높일 수 있지만, 막연한 보증·다수 의견·학습 시간만으로 판정을 바꾸지 않는다.
 - 버튼 endpoint는 Discord 서명과 component payload를 검증하고 request-review job 하나만 기록한 뒤 3초 안에 type 6으로 ACK한다. Judge worker가 guild, 소유자, anchor 메시지, thread/채널, 마감, 설정 버전의 회차 상태를 fail-closed로 검증한다.
 - Discord의 component `data.id`는 32-bit 정수이며 legacy component의 `0`도 허용한다. application command의 `data.id` snowflake와 경계 parser에서 구분한다.
 - Discord payload, command option, snowflake ID, SQS body는 경계에서 Zod로 검증한다.

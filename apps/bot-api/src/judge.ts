@@ -1,4 +1,5 @@
 import { parseJudgment, judgeRequest } from '@disciplinary-committee/ai-judge';
+import type { appealRequest } from '@disciplinary-committee/ai-judge';
 import {
   diagnosticForFailure,
   scorePolicySchema,
@@ -42,7 +43,9 @@ const judgeJobSchema = z
 export type JudgeJob = z.infer<typeof judgeJobSchema>;
 
 export type ModelClient = {
-  create(request: ReturnType<typeof judgeRequest>): Promise<{ outputText: string }>;
+  create(
+    request: ReturnType<typeof judgeRequest> | ReturnType<typeof appealRequest>,
+  ): Promise<{ outputText: string }>;
 };
 export type DiscordFollowupClient = {
   editOriginal(input: {
